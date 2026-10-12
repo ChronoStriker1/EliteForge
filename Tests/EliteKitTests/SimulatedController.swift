@@ -24,6 +24,13 @@ final class SimulatedController: GIPLink, @unchecked Sendable {
     /// Mimics the real controller: with a custom profile active, unlock is
     /// refused and reads of that slot's pages are flagged 0x80.
     var activeSlot = 0
+    /// Calibration values per target, as the controller reports them.
+    var calibration: [UInt8: [UInt16]] = [0x01: [849, 3233, 883, 3248], 0x04: [1070, 1353, 1896, 3341]]
+    /// Target bits being calibrated: started and not yet ended by a read.
+    var calibrating: UInt8 = 0
+    /// Whether the controller has seen the whole movement sequence, so the
+    /// next read of the target ends its calibration.
+    var calibrationMovementDone = true
     private var seq = GIPSequence(start: 0x40)
 
     init() {
@@ -41,6 +48,33 @@ final class SimulatedController: GIPLink, @unchecked Sendable {
         if let late = delayed {
             delayed = nil
             inbox.push(late)
+        }
+        if frame.command == GIPCommand.system, frame.payload.count >= 2 {
+            let target = frame.payload[1]
+            var reply: [UInt8]
+            switch frame.payload[0] {
+            case CalibrationCommand.start:
+                calibrating |= target
+                reply = [0x10, 0x00, target]
+            case CalibrationCommand.read:
+                var values = calibration[target] ?? [0, 0, 0, 0]
+                var state = calibrating
+                if calibrating & target != 0 {
+                    if calibrationMovementDone {
+                        calibrating &= ~target
+                        state = 0x10
+                    } else {
+                        values = values.map { _ in 0 }
+                    }
+                }
+                reply = [0x0F, 0x00, state, target]
+                if target & 0x0C != 0 { reply.append(UInt8(values.count)) }
+                for value in values { reply += [UInt8(value & 0xFF), UInt8(value >> 8)] }
+            default:
+                return
+            }
+            inbox.push(GIPFrame(command: GIPCommand.system, options: GIPOptions.needsAck, sequence: seq.next(), payload: reply))
+            return
         }
         guard frame.command == GIPCommand.vendor, let sub = frame.payload.first else { return }
         vendorSends += 1

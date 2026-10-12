@@ -53,6 +53,19 @@ enum DebugSnapshots {
         render("triggers", size: CGSize(width: 1180, height: 420), ZStack { CanvasBackground(); TriggersEditor(profile: profile).padding(20) })
         render("vibration", size: CGSize(width: 1180, height: 460), ZStack { CanvasBackground(); VibrationEditor(profile: profile).padding(20) })
         render("light", size: CGSize(width: 900, height: 320), ZStack { CanvasBackground(); LightEditor(profile: profile).padding(20) })
+        var left = StickCheck(), right = StickCheck()
+        left.addRest(x: 400, y: -300)
+        right.addRest(x: 1900, y: 900)
+        for step in 0..<720 {
+            let angle = Double(step) / 720 * 2 * .pi
+            left.addMotion(x: Int16(max(min(cos(angle) * 1.05, 1), -1) * 32767), y: Int16(max(min(sin(angle) * 1.05, 1), -1) * 32767))
+            let short = angle > 1.4 && angle < 3.3 ? 0.92 : 1.0
+            right.addMotion(x: Int16(cos(angle) * short * 32767), y: Int16(sin(angle) * short * 32767))
+        }
+        var leftTrigger = TriggerCheck(), rightTrigger = TriggerCheck()
+        leftTrigger.addMotion(1023)
+        rightTrigger.addMotion(1023)
+        render("stick-check", size: CGSize(width: 1180, height: 460), ZStack { CanvasBackground(); StickCheckCard(finished: left, right, leftTrigger, rightTrigger).padding(20) })
         render("home", size: CGSize(width: 1180, height: 900), ControllerView())
         exit(0)
     }

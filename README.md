@@ -55,7 +55,7 @@ The build is ad-hoc signed. That's enough on the Mac that built it. To run it on
 | Stick response curves with draggable points | Done |
 | Curve presets Aggressive, Instant, Delay, Smooth | Approximate shapes. Microsoft's exact values haven't been captured yet. |
 | Trigger range | Slider per trigger, using upstream xbelite2's saturation layout. Verified on hardware: at 30% the trigger reports full at 30% of its pull. Stick range values are preserved. |
-| Hair trigger locks | Shown read-only, since they're physical switches. The controller only reports them on Profile 0 (Default). |
+| Hair trigger locks | Shown read-only, since they're physical switches. Trigger calibration reads them to check each lock position. |
 | Vibration strength per motor | Done |
 | Xbox button colour and brightness | Done, with a live preview on the controller. Stored colour verified on hardware. |
 | Default profile light | EliteForge only: the Default profile can't store a colour, so while EliteForge holds the controller over USB the helper shows a chosen colour whenever Default is active, using the same live command as the colour preview. It's white again once released or unplugged. |
@@ -66,6 +66,8 @@ The build is ad-hoc signed. That's enough on the Mac that built it. To run it on
 | Stick dead zones | Done, set through the curve's first point (see docs/protocol.md), and verified on hardware. The stick view draws the dead zone and shows the physical stick position next to the output after the dead zone and curve. |
 | Trigger inner dead zone | Not yet: encoding unknown |
 | Keyboard keys on buttons and paddles | Not yet: only the trigger encoding is captured |
+| Thumbstick and trigger calibration | Done: the same 0x1E commands as the Accessories app (captured on Windows), stored in the controller. |
+| Stick check | EliteForge only: measures drift at rest, reach around the edge and full trigger travel from the raw positions, and suggests a dead zone for drift. |
 | Firmware updates | Not planned. Use the Xbox app on Windows or an Xbox console. |
 
 Filling the "encoding unknown" rows needs USB captures of the Windows Accessories app making those changes, for example with Wireshark and USBPcap. With those, the remaining work is small, because the app keeps every byte it doesn't understand unchanged.
@@ -83,6 +85,8 @@ forgectl read 1 --raw > backup.json
 forgectl write-raw 1 backup.json
 forgectl name "My Elite"
 forgectl watch 20               # live input
+forgectl calibration            # stored stick and trigger calibration
+forgectl calibrate ls           # recalibrate the left stick (ls, rs, lt, rt)
 forgectl trace 5                # raw USB frames
 ```
 

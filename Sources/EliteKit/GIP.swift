@@ -236,6 +236,11 @@ public enum GIPPackets {
     public static func vendor(_ seq: GIPSequence, _ payload: [UInt8]) -> GIPFrame {
         GIPFrame(command: GIPCommand.vendor, options: GIPOptions.needsAck, sequence: seq.next(), payload: payload)
     }
+
+    /// A 0x1E request, such as calibration, in the same form as vendor requests.
+    public static func system(_ seq: GIPSequence, _ payload: [UInt8]) -> GIPFrame {
+        GIPFrame(command: GIPCommand.system, options: GIPOptions.needsAck, sequence: seq.next(), payload: payload)
+    }
 }
 
 extension Array where Element == UInt8 {

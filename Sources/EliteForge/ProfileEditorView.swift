@@ -514,13 +514,11 @@ struct TriggersEditor: View {
         }
     }
 
-    /// The controller only reports the switch positions on the Default profile.
-    private var lockReadable: Bool { model.isConfiguring && model.status.activeSlot == 0 }
+    /// The switch positions come with the 0x0C report, on any profile.
+    private var lockReadable: Bool { model.isConfiguring && model.input.leftTriggerStop != nil }
 
     private var lockHint: String {
-        if !model.isConfiguring { return "Connect the controller to read the switch." }
-        if model.status.activeSlot == nil { return "Press any button on the controller so it reports the switch." }
-        return "Shown on Profile 0 (Default) only. Press the profile button until no light is on."
+        model.isConfiguring ? "Press any button on the controller so it reports the switch." : "Connect the controller to read the switch."
     }
 
     private func triggerCard(_ title: String, short: String, settings: TriggerSettings, lock: TriggerStop?, live: UInt16, update: @escaping (UInt8) -> Void) -> some View {

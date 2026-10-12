@@ -6,7 +6,7 @@ public let helperServiceName = "com.eliteforge.helper"
 
 /// Bumped whenever the request/reply format changes, so the app can tell
 /// the installed helper is out of date and offer to reinstall it.
-public let helperProtocolVersion = 15
+public let helperProtocolVersion = 18
 
 /// The helper's XPC interface. Requests and replies are JSON-encoded
 /// `HelperRequest` / `HelperReply` values, which keeps the XPC surface to one method.
@@ -41,6 +41,11 @@ public enum HelperRequest: Codable, Sendable {
     /// nil turns it off.
     case setDefaultLight(RGBColor?)
     case rumble(leftGrip: UInt8, rightGrip: UInt8, leftTrigger: UInt8, rightTrigger: UInt8)
+    /// Returns `.calibration`. The first read after a calibration's movement
+    /// sequence is complete ends it and stores it.
+    case readCalibration(CalibrationTarget)
+    /// Starts calibrating a stick or trigger in the controller's firmware.
+    case startCalibration(CalibrationTarget, serial: String?)
     /// Sends every raw USB frame to this client as `.trace` events. For debugging.
     case setTrace(Bool)
     /// Sends raw bytes to the controller. Only honoured by helpers built with
@@ -55,6 +60,7 @@ public enum HelperReply: Codable, Sendable {
     case status(ControllerStatus)
     case pages(SlotPages)
     case name(String)
+    case calibration(CalibrationReading)
     case failure(String)
 }
 

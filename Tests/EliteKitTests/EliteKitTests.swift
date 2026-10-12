@@ -504,3 +504,86 @@ final class SessionTests: XCTestCase {
         XCTAssertEqual(ControllerSession.decodeName(reply), "Himothy")
     }
 }
+
+final class StickCheckTests: XCTestCase {
+    func testRestOffsetAndSuggestedDeadZone() {
+        var check = StickCheck()
+        XCTAssertNil(check.suggestedDeadZone)
+        check.addRest(x: 300, y: -200)
+        XCTAssertNil(check.suggestedDeadZone, "about 1% off centre needs no dead zone")
+        check.addRest(x: 1966, y: 0) // 6%
+        XCTAssertEqual(check.restOffset, 1966.0 / 32767, accuracy: 1e-9)
+        XCTAssertEqual(check.suggestedDeadZone, 8)
+        XCTAssertEqual(check.restCentre!.x, (300.0 + 1966) / 2 / 32767, accuracy: 1e-9)
+    }
+
+    func testCircleReachAndShortDirections() {
+        var check = StickCheck()
+        XCTAssertEqual(check.coverage, 0)
+        XCTAssertNil(check.averageReach)
+        // A full circle, except up only reaches 90%.
+        for step in 0..<720 {
+            let angle = Double(step) / 720 * 2 * .pi
+            let radius = abs(angle - .pi / 2) < 0.2 ? 0.9 : 1.0
+            check.addMotion(x: Int16(cos(angle) * radius * 32767), y: Int16(sin(angle) * radius * 32767))
+        }
+        XCTAssertEqual(check.coverage, 1)
+        XCTAssertEqual(check.minimumReach!, 0.9, accuracy: 0.001)
+        XCTAssertEqual(check.shortDirections, [.up])
+        // Small pushes don't count as visiting a direction.
+        var small = StickCheck()
+        small.addMotion(x: 8000, y: 0)
+        XCTAssertEqual(small.coverage, 0)
+        XCTAssertEqual(StickCheck.sector(dx: 0, dy: 1), 18)
+        XCTAssertEqual(StickCheck.sector(dx: 1, dy: -0.0001), 71)
+    }
+
+    func testTriggerCheck() {
+        var check = TriggerCheck()
+        check.addRest(12)
+        check.addRest(4)
+        check.addMotion(1001)
+        check.addMotion(400)
+        XCTAssertEqual(check.rest, 12)
+        XCTAssertEqual(check.peak, 1001)
+    }
+}
+
+final class CalibrationTests: XCTestCase {
+    func testParsesCapturedReplies() {
+        // Payloads from the Windows capture of the Accessories app.
+        let stick = CalibrationReading(reply: [UInt8](hexString: "0f 00 00 01 51 03 a1 0c 73 03 b0 0c")!)
+        XCTAssertEqual(stick, CalibrationReading(target: .leftStick, state: .idle, values: [849, 3233, 883, 3248]))
+        let trigger = CalibrationReading(reply: [UInt8](hexString: "0f 00 10 04 04 ed 03 5a 05 84 07 03 0d")!)
+        XCTAssertEqual(trigger, CalibrationReading(target: .leftTrigger, state: .finished, values: [1005, 1370, 1924, 3331]))
+        // Read right after a start: the state is the target being calibrated.
+        let started = CalibrationReading(reply: [UInt8](hexString: "0f 00 04 04 04 00 00 00 00 00 00 00 00")!)
+        XCTAssertEqual(started?.state, .collecting(0x04))
+        XCTAssertTrue(started!.isCollecting)
+        // On macOS, with the right stick's calibration unfinished, every read
+        // reported it; the left stick still had its stored values.
+        let other = CalibrationReading(reply: [UInt8](hexString: "0f 00 02 01 8a 03 a3 0c 48 03 97 0c")!)
+        XCTAssertEqual(other?.state, .collecting(0x02))
+        XCTAssertFalse(other!.isCollecting)
+        XCTAssertNil(CalibrationReading(reply: [0x0F, 0x00, 0x00, 0x03, 0x00, 0x00]), "not a known target")
+    }
+
+    func testCalibrationSequence() throws {
+        let controller = SimulatedController()
+        let session = ControllerSession(link: controller, inbox: controller.inbox)
+        XCTAssertEqual(try session.readCalibration(.leftStick).state, .idle)
+        controller.calibrationMovementDone = false
+        try session.startCalibration(.leftStick)
+        let early = try session.readCalibration(.leftStick)
+        XCTAssertTrue(early.isCollecting)
+        XCTAssertEqual(early.values, [0, 0, 0, 0])
+        controller.calibrationMovementDone = true
+        let result = try session.readCalibration(.leftStick)
+        XCTAssertEqual(result.state, .finished)
+        XCTAssertEqual(result.values, [849, 3233, 883, 3248])
+        let sent = controller.sent.filter { $0.command == GIPCommand.system }.map(\.payload)
+        XCTAssertEqual(sent, [[0x0F, 0x01], [0x10, 0x01], [0x0F, 0x01], [0x0F, 0x01]])
+        XCTAssertEqual(controller.sent.last?.options, GIPOptions.needsAck)
+        XCTAssertEqual(try session.readCalibration(.leftTrigger).values, [1070, 1353, 1896, 3341])
+    }
+}

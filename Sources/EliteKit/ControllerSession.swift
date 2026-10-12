@@ -121,15 +121,24 @@ public final class ControllerSession: @unchecked Sendable {
     /// Throws unless the reply status is in `accepting`.
     @discardableResult
     func vendorRequest(_ payload: [UInt8], what: String, accepting: Set<UInt8> = [0x00], match: @escaping ([UInt8]) -> Bool) throws -> [UInt8] {
+        try request(GIPCommand.vendor, payload, what: what, accepting: accepting, match: match)
+    }
+
+    /// Sends a `command` request (0x4D vendor or 0x1E system) and waits for
+    /// the reply with the same command that `match` accepts. Throws unless
+    /// the reply status is in `accepting`.
+    @discardableResult
+    func request(_ command: UInt8, _ payload: [UInt8], what: String, accepting: Set<UInt8> = [0x00],
+                 timeout: TimeInterval? = nil, retries: Int? = nil, match: @escaping ([UInt8]) -> Bool) throws -> [UInt8] {
         try exclusive {
             // Every reply carries [sub-command, status, ...]; shorter ones are malformed.
-            let isReply: (GIPFrame) -> Bool = { $0.command == GIPCommand.vendor && $0.payload.count >= 2 && match($0.payload) }
+            let isReply: (GIPFrame) -> Bool = { $0.command == command && $0.payload.count >= 2 && match($0.payload) }
             // A late answer to an earlier, retried request must not be taken
             // as this request's answer. Replies use the controller's own
             // sequence numbers, so they can't be told apart any other way:
             // wait out the answers still owed, then drop anything left.
             absorbStrays()
-            inbox.removeAll { $0.command == GIPCommand.vendor }
+            inbox.removeAll { $0.command == command }
             // Every attempt may still be answered except the one whose answer
             // was taken; recorded on every way out, including send errors.
             // A send that threw counts too: it may have reached the controller.
@@ -139,10 +148,11 @@ public final class ControllerSession: @unchecked Sendable {
                 let owed = attempts - (answered ? 1 : 0)
                 if owed > 0 { strays.append((isReply, owed, Date().addingTimeInterval(strayWindow))) }
             }
-            for _ in 0..<retries {
+            let frame = { command == GIPCommand.system ? GIPPackets.system(self.sequence, payload) : GIPPackets.vendor(self.sequence, payload) }
+            for _ in 0..<(retries ?? self.retries) {
                 attempts += 1
-                try link.send(GIPPackets.vendor(sequence, payload))
-                if let frame = inbox.take(timeout: timeout, where: isReply) {
+                try link.send(frame())
+                if let frame = inbox.take(timeout: timeout ?? self.timeout, where: isReply) {
                     answered = true
                     if !accepting.contains(frame.payload[1]) {
                         throw ControllerError.rejected(what, status: frame.payload[1])
@@ -187,6 +197,30 @@ public final class ControllerSession: @unchecked Sendable {
         return (1...3).first { slot in
             guard let pages = ProfilePages.addresses(slot: slot) else { return false }
             return [pages.normalMapping, pages.normalCurves, pages.shiftMapping, pages.shiftCurves].contains(reply[2])
+        }
+    }
+
+    // MARK: Calibration
+
+    /// The target's calibration values. While the target is being
+    /// calibrated they read as zero; the first read after the controller has
+    /// seen the whole movement sequence ends the calibration and stores it.
+    public func readCalibration(_ target: CalibrationTarget) throws -> CalibrationReading {
+        let what = "read the \(target.label) calibration"
+        let reply = try request(GIPCommand.system, [CalibrationCommand.read, target.rawValue], what: what) {
+            $0.count >= 4 && $0[0] == CalibrationCommand.read && $0[3] == target.rawValue
+        }
+        guard let reading = CalibrationReading(reply: reply) else { throw ControllerError.rejected(what, status: reply[1]) }
+        return reading
+    }
+
+    /// Starts calibrating the target. Not retried, since a second start
+    /// would throw away what was collected; a trigger start took 0.8 s to be
+    /// answered in captures.
+    public func startCalibration(_ target: CalibrationTarget) throws {
+        try request(GIPCommand.system, [CalibrationCommand.start, target.rawValue], what: "start the \(target.label) calibration",
+                    timeout: 3, retries: 1) {
+            $0.count >= 3 && $0[0] == CalibrationCommand.start && $0[2] == target.rawValue
         }
     }
 

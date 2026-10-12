@@ -177,7 +177,7 @@ When the Accessories app inverted the right stick, it changed only the normal-la
 
 The triggers and sticks in this report are what games get: the active profile's trigger range, dead zones and curves are already applied. The 0x0C report carries the same fields as the physical positions (verified on 5.22.16.0, profile 3 with a 30% left trigger range, a 30% left stick dead zone and Instant curves). Raw LT 151 came through 0x20 as 499 and raw 319 as 1023, the left stick read 0 in 0x20 up to about 30% raw deflection, and the unchanged right trigger matched exactly. macOS's own driver, with EliteForge closed, showed the same processed values.
 
-The 0x0C report has the same layout for bytes 0-14, with the physical trigger and stick positions before the profile's settings. It carries the active slot in payload byte 15. Byte 16 holds the hair trigger lock positions, `(RT << 2) | LT`, with 0 = full travel, 1 = half, 2 = short (verified on Profile 0 (Default); with a custom profile active it read 0, which looks the same as full). The locks are physical switches with no software setting. The controller detects their position and scales the shorter travel so a full pull still reports 1023.
+The 0x0C report has the same layout for bytes 0-14, with the physical trigger and stick positions before the profile's settings. It carries the active slot in payload byte 15. Byte 16 holds the hair trigger lock positions, `(RT << 2) | LT`, with 0 = full travel, 1 = half, 2 = short (verified on Profile 0 (Default) on macOS, and in the Windows calibration capture with Profile 1 active). The locks are physical switches with no software setting. The controller detects their position and scales the shorter travel so a full pull still reports 1023.
 
 ## HELLO
 
@@ -190,6 +190,32 @@ The 28-byte payload holds:
 | 10-11 | GIP product ID (0x0B02) |
 | 12-19 | firmware, four u16 values (5.22.16.0 here) |
 | 20-27 | hardware version |
+
+## Calibration (0x1E)
+
+Captured from the Accessories app's thumbstick and trigger calibration on Windows (firmware 5.22.16.0, app 2506.2505.28001.0). Requests and replies use command 0x1E with option 0x10 (needs ack), the same way as vendor requests. The controller doesn't need to be on the Default profile; the capture ran with Profile 1 active.
+
+| Request | Reply | Meaning |
+|---|---|---|
+| `1e 10 s 02 0f T` | `0f 00 F T values` | read the calibration of target T |
+| `1e 10 s 02 10 T` | `10 00 T` | start calibrating T |
+
+T is a bit: 0x01 left stick, 0x02 right stick, 0x04 left trigger, 0x08 right trigger. Stick values are four u16 LE in raw 12-bit sensor units: X minimum, X maximum, Y minimum, Y maximum (left stick before: 849, 3233, 883, 3248). A trigger reply has a count byte (4) before its values: the sensor reading at rest, then at the end of the pull with the short, half and full hair trigger lock (left trigger before: 1070, 1353, 1896, 3341).
+
+F is the controller's state, the same whatever target is read: 0x00 when no calibration is running, the target bit while one is (0x04 right after a left trigger start), and 0x10 on the read that ends a finished calibration. While a target is being calibrated its values read as zero; other targets read their stored values.
+
+The Accessories app's sequence for each target:
+
+1. Read T (F = 0x00), the stored values.
+2. Start T. A trigger start took 0.8 s to be answered; a stick start, 40 ms.
+3. The user moves the control. Sticks: 6 turns clockwise at the edge, 6 counter-clockwise, then a push up, right, down and left, then let go. Triggers: 12 full pulls and releases with the hair trigger lock on full, 12 on half, 12 on short. The app buzzes all four motors at 10 for about 300 ms (`09 00 s 09 00 0f 0a 0a 0a 0a ff 00 eb`) after each part, then once at 30 when all movement is done.
+4. Read T again (F = 0x10). That ends the calibration and stores the new values: after a replug, on macOS, the stored values matched the last reads exactly. Two more buzzes at 30 follow.
+
+EliteForge follows the same sequence and has calibrated the right stick on macOS this way: the final read came back with F = 0x10 and the values were stored (X 967-3283, Y 782-3331).
+
+While a calibration runs, the target's processed values in the 0x20 report can stay still, so anything watching the movement has to read the raw 0x0C positions, which keep coming. An unfinished calibration survives a helper release and recapture, and also a USB replug, since the controller keeps running on its battery.
+
+The controller decides when it has seen enough. A read after only 3 turns of the right stick, on macOS, came back with F = 0x02 and zeros, and the calibration kept running: reading doesn't end an unfinished one. There's no cancel in the capture and no command that writes values directly, so a calibration can only be replaced by running another one.
 
 ## Still unknown
 

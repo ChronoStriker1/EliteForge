@@ -138,6 +138,11 @@ public final class HelperClient: NSObject, @unchecked Sendable {
         guard case .name(let stored) = try await perform(.writeName(name, serial: serial)) else { throw HelperClientError.unexpectedReply }
         return stored
     }
+
+    public func readCalibration(_ target: CalibrationTarget) async throws -> CalibrationReading {
+        guard case .calibration(let reading) = try await perform(.readCalibration(target)) else { throw HelperClientError.unexpectedReply }
+        return reading
+    }
 }
 
 /// Runs a closure at most once; XPC can call both the reply and the error handler.

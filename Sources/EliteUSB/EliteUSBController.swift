@@ -477,7 +477,7 @@ public final class EliteUSBController: GIPLink, @unchecked Sendable {
         switch frame.command {
         case GIPCommand.ack:
             return
-        case GIPCommand.vendor:
+        case GIPCommand.vendor, GIPCommand.system:
             inbox.push(frame)
             stateLock.withLock { lastLiveFrame = Date() }
         case GIPCommand.hello:

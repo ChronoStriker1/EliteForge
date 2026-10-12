@@ -154,6 +154,11 @@ final class ControllerManager: @unchecked Sendable {
                 }
                 try session.rumble(leftGrip: leftGrip, rightGrip: rightGrip, leftTrigger: leftTrigger, rightTrigger: rightTrigger)
                 return .ok
+            case .readCalibration(let target):
+                return .calibration(try attach(client).readCalibration(target))
+            case .startCalibration(let target, let serial):
+                try attach(client, expecting: serial).startCalibration(target)
+                return .ok
             case .sendRaw(let bytes):
                 #if HELPER_RAW_SEND
                 guard let frame = GIPFrame(bytes: bytes) else { return .failure("Not a GIP frame.") }
@@ -309,9 +314,11 @@ final class ControllerManager: @unchecked Sendable {
                 input.apply(guide: frame.payload)
                 inputDirty = true
             case GIPCommand.eliteInput:
-                let stops = (input.leftTriggerStop, input.rightTriggerStop, input.activeSlot)
+                // The raw positions can change on their own: while a stick is
+                // being calibrated, its processed 0x20 values stay put.
+                let before = input
                 input.apply(elite: frame.payload)
-                if stops != (input.leftTriggerStop, input.rightTriggerStop, input.activeSlot) { inputDirty = true }
+                if input != before { inputDirty = true }
                 if status.activeSlot != input.activeSlot {
                     status.activeSlot = input.activeSlot
                     statusChanged = true

@@ -45,6 +45,12 @@ done
 [ -n "$CLIENT_LIST" ] || { echo "install-helper.sh: no client binaries found; the helper would refuse every client" >&2; exit 1; }
 
 launchctl bootout "system/$LABEL" 2>/dev/null || true
+# bootout returns before the old helper has exited, and bootstrapping the
+# label again meanwhile fails with "Bootstrap failed: 5: Input/output error".
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+	launchctl print "system/$LABEL" >/dev/null 2>&1 || break
+	sleep 1
+done
 # Remove the helper from before the app was renamed (XBElite2).
 launchctl bootout system/com.xbelite2.helper 2>/dev/null || true
 rm -f /Library/LaunchDaemons/com.xbelite2.helper.plist /Library/PrivilegedHelperTools/com.xbelite2.helper
@@ -55,5 +61,9 @@ TMP="$(mktemp)"
 printf '%s' "$CLIENT_LIST" > "$TMP"
 install -o root -g wheel -m 644 "$TMP" "$CLIENTS"
 rm -f "$TMP"
-launchctl bootstrap system "/Library/LaunchDaemons/$LABEL.plist"
+for attempt in 1 2 3 4 5; do
+	launchctl bootstrap system "/Library/LaunchDaemons/$LABEL.plist" && break
+	[ "$attempt" -lt 5 ] || exit 1
+	sleep 1
+done
 echo "EliteForge helper installed"

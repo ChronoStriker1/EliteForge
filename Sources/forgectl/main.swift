@@ -18,6 +18,8 @@ commands:
   reset <profile>                  restore a profile to factory defaults
   light <RRGGBB | default>       preview an Xbox button colour for a few seconds
   rumble <lgrip> <rgrip> <ltrig> <rtrig> [seconds]   test motors, values 0-100
+  calibration [target]           show the stored calibration (targets: ls, rs, lt, rt)
+  calibrate <target> [seconds]   recalibrate a stick or trigger; ends on Enter or after the seconds
   watch [seconds]                print live input (default 30 seconds)
   trace [seconds]                print raw USB frames (default 10 seconds)
   send <hex bytes>               send a raw frame (developer helper builds only)
@@ -127,6 +129,11 @@ final class DirectBackend: Backend {
         case .rumble(let lg, let rg, let lt, let rt):
             try session.rumble(leftGrip: lg, rightGrip: rg, leftTrigger: lt, rightTrigger: rt)
             return .ok
+        case .readCalibration(let target):
+            return .calibration(try session.readCalibration(target))
+        case .startCalibration(let target, _):
+            try session.startCalibration(target)
+            return .ok
         }
     }
 
@@ -173,6 +180,32 @@ func describe(_ profile: EliteProfile, pages: SlotPages) -> String {
     lines.append("Vibration: left grip \(v.leftGrip)%, right grip \(v.rightGrip)%, left trigger \(v.leftTrigger)%, right trigger \(v.rightTrigger)%")
     lines.append("Xbox button: brightness \(profile.light.brightness)%, colour \(profile.light.color.map { "#" + $0.hex } ?? "default")")
     return lines.joined(separator: "\n")
+}
+
+func calibrationTarget(_ name: String) -> CalibrationTarget {
+    switch name.lowercased() {
+    case "ls", "left-stick": .leftStick
+    case "rs", "right-stick": .rightStick
+    case "lt", "left-trigger": .leftTrigger
+    case "rt", "right-trigger": .rightTrigger
+    default: fail("unknown target \(name): use ls, rs, lt or rt")
+    }
+}
+
+func describe(_ reading: CalibrationReading) -> String {
+    let state: String
+    switch reading.state {
+    case .idle: state = "stored"
+    case .finished: state = "new, stored"
+    case .collecting(let mask):
+        let names = CalibrationTarget.allCases.filter { mask & $0.rawValue != 0 }.map(\.label).joined(separator: ", ")
+        state = reading.isCollecting ? "calibrating" : "stored (calibrating \(names))"
+    }
+    let v = reading.values
+    let values = reading.target.isTrigger
+        ? zip(["rest", "short", "half", "full"], v).map { "\($0) \($1)" }.joined(separator: "  ")
+        : v.count == 4 ? "X \(v[0])-\(v[1])  Y \(v[2])-\(v[3])" : v.map(String.init).joined(separator: " ")
+    return "\(reading.target.label.padding(toLength: 13, withPad: " ", startingAt: 0)) \(state): \(values)"
 }
 
 func describe(_ state: InputState) -> String {
@@ -259,6 +292,32 @@ func run() throws {
         _ = try backend.perform(.rumble(leftGrip: values[0], rightGrip: values[1], leftTrigger: values[2], rightTrigger: values[3]))
         Thread.sleep(forTimeInterval: seconds)
         _ = try backend.perform(.rumble(leftGrip: 0, rightGrip: 0, leftTrigger: 0, rightTrigger: 0))
+    case "calibration":
+        let targets = args.count > 1 ? [calibrationTarget(args[1])] : CalibrationTarget.allCases
+        for target in targets {
+            guard case .calibration(let reading) = try backend.perform(.readCalibration(target)) else { continue }
+            print(describe(reading))
+        }
+    case "calibrate":
+        guard args.count > 1 else { fail("calibrate needs a target: ls, rs, lt or rt") }
+        let target = calibrationTarget(args[1])
+        _ = try backend.perform(.attach)
+        if case .calibration(let before) = try backend.perform(.readCalibration(target)) { print("before: \(describe(before))") }
+        _ = try backend.perform(.startCalibration(target, serial: nil))
+        print(target.isTrigger
+              ? "Pull the \(target.label) all the way and let go 12 times with the hair trigger lock on full, then 12 times on half, then 12 times on short."
+              : "Circle the \(target.label) around its edge 6 times clockwise, then 6 times counter-clockwise. Then push it up, right, down and left, and let go.")
+        if args.count > 2, let seconds = Double(args[2]) {
+            print("Finishing in \(Int(seconds)) seconds.")
+            fflush(stdout)
+            Thread.sleep(forTimeInterval: seconds)
+        } else {
+            print("Press Enter when done.")
+            _ = readLine()
+        }
+        guard case .calibration(let after) = try backend.perform(.readCalibration(target)) else { return }
+        print("after:  \(describe(after))")
+        if after.isCollecting { print("The controller hasn't seen the whole sequence yet. Finish the movements and run `forgectl calibration \(args[1])`.") }
     case "watch":
         let seconds = args.count > 1 ? Double(args[1]) ?? 30 : 30
         var last = ""

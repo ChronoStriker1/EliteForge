@@ -638,4 +638,22 @@ final class AppModel {
             errorMessage = error.localizedDescription
         }
     }
+
+    // MARK: Calibration
+
+    func readCalibration(_ target: CalibrationTarget) async throws -> CalibrationReading {
+        try await helper.readCalibration(target)
+    }
+
+    func startCalibration(_ target: CalibrationTarget) async throws {
+        _ = try await helper.perform(.startCalibration(target, serial: status.serialNumber))
+    }
+
+    /// A short buzz on all four motors, the way the Accessories app marks
+    /// each finished calibration step (10) and the end (30).
+    func calibrationPulse(strength: UInt8) async {
+        _ = try? await helper.perform(.rumble(leftGrip: strength, rightGrip: strength, leftTrigger: strength, rightTrigger: strength))
+        try? await Task.sleep(for: .milliseconds(300))
+        _ = try? await helper.perform(.rumble(leftGrip: 0, rightGrip: 0, leftTrigger: 0, rightTrigger: 0))
+    }
 }

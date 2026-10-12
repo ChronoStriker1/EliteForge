@@ -18,6 +18,7 @@ struct ControllerView: View {
                     }
                     .glassGroup()
                     DefaultLightCard()
+                    StickCheckCard()
                 }
             }
             .padding(20)
