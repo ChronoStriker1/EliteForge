@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b2f33"/>
+      <stop offset="1" stop-color="#0c0d0f"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.47" r="0.5">
+      <stop offset="0" stop-color="#5cdc3d" stop-opacity="0.55"/>
+      <stop offset="0.6" stop-color="#107c10" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#107c10" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f2f4f5"/>
+      <stop offset="0.55" stop-color="#a9aeb3"/>
+      <stop offset="1" stop-color="#5d6268"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8af06a"/>
+      <stop offset="1" stop-color="#107c10"/>
+    </linearGradient>
+  </defs>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#bg)"/>
+  <rect x="64" y="64" width="896" height="896" rx="200" fill="url(#glow)"/>
+  <circle cx="512" cy="492" r="300" fill="none" stroke="url(#ring)" stroke-width="34"/>
+  <!-- Anvil -->
+  <path fill="url(#metal)" d="M300 400 H700 C700 452 664 486 610 494 L580 498 C562 520 556 548 560 578 H620 C640 578 652 592 652 610 V626 H372 V610 C372 592 384 578 404 578 H464 C468 548 462 520 444 498 L380 486 C330 476 300 446 300 400 Z"/>
+  <!-- Sparks -->
+  <g fill="#8af06a">
+    <circle cx="742" cy="330" r="16"/>
+    <circle cx="786" cy="392" r="10"/>
+    <circle cx="700" cy="270" r="9"/>
+  </g>
+  <path d="M708 352 L770 300" stroke="#8af06a" stroke-width="12" stroke-linecap="round"/>
+</svg>
