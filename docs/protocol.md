@@ -175,9 +175,9 @@ When the Accessories app inverted the right stick, it changed only the normal-la
 - 6-13: sticks, i16
 - 14: paddles. Bit 0 P1 upper right, bit 1 P2 lower right, bit 2 P3 upper left, bit 3 P4 lower left (verified).
 
-The sticks and triggers in this report don't have the active profile's settings applied. With an 11% stick dead zone and a 30% left trigger range on the active profile, the report still showed stick movement inside the dead zone and a normal trigger ramp (5.22.16.0). Checking what those settings do needs a game or gamepad tester with EliteForge closed. The 0x0C report carries the same fields; whether they're the processed values hasn't been checked.
+The triggers and sticks in this report are what games get: the active profile's trigger range, dead zones and curves are already applied. The 0x0C report carries the same fields as the physical positions (verified on 5.22.16.0, profile 3 with a 30% left trigger range, a 30% left stick dead zone and Instant curves). Raw LT 151 came through 0x20 as 499 and raw 319 as 1023, the left stick read 0 in 0x20 up to about 30% raw deflection, and the unchanged right trigger matched exactly. macOS's own driver, with EliteForge closed, showed the same processed values.
 
-The 0x0C report carries the active slot in payload byte 15. Byte 16 holds the hair trigger lock positions, `(RT << 2) | LT`, with 0 = full travel, 1 = half, 2 = short (verified on Profile 0 (Default); with a custom profile active it read 0, which looks the same as full). The locks are physical switches with no software setting. The controller detects their position and scales the shorter travel so a full pull still reports 1023.
+The 0x0C report has the same layout for bytes 0-14, with the physical trigger and stick positions before the profile's settings. It carries the active slot in payload byte 15. Byte 16 holds the hair trigger lock positions, `(RT << 2) | LT`, with 0 = full travel, 1 = half, 2 = short (verified on Profile 0 (Default); with a custom profile active it read 0, which looks the same as full). The locks are physical switches with no software setting. The controller detects their position and scales the shorter travel so a full pull still reports 1023.
 
 ## HELLO
 

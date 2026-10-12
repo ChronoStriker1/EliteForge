@@ -54,7 +54,7 @@ The build is ad-hoc signed. That's enough on the Mac that built it. To run it on
 | Invert Y per stick | Done (encoding from captures) |
 | Stick response curves with draggable points | Done |
 | Curve presets Aggressive, Instant, Delay, Smooth | Approximate shapes. Microsoft's exact values haven't been captured yet. |
-| Trigger range | Slider per trigger, using upstream xbelite2's saturation layout. Stick range values are preserved. |
+| Trigger range | Slider per trigger, using upstream xbelite2's saturation layout. Verified on hardware: at 30% the trigger reports full at 30% of its pull. Stick range values are preserved. |
 | Hair trigger locks | Shown read-only, since they're physical switches. The controller only reports them on Profile 0 (Default). |
 | Vibration strength per motor | Done |
 | Xbox button colour and brightness | Done, with a live preview on the controller. Stored colour verified on hardware. |
@@ -63,7 +63,7 @@ The build is ad-hoc signed. That's enough on the Mac that built it. To run it on
 | Live button, stick, trigger and paddle test | Done, tested on hardware |
 | Vibration test | Done |
 | Swap sticks, swap triggers | Not yet: encoding unknown |
-| Stick dead zones | Done, set through the curve's first point (see docs/protocol.md). The stick view draws the dead zone and shows stick position next to the output after the dead zone and curve. |
+| Stick dead zones | Done, set through the curve's first point (see docs/protocol.md), and verified on hardware. The stick view draws the dead zone and shows the physical stick position next to the output after the dead zone and curve. |
 | Trigger inner dead zone | Not yet: encoding unknown |
 | Keyboard keys on buttons and paddles | Not yet: only the trigger encoding is captured |
 | Firmware updates | Not planned. Use the Xbox app on Windows or an Xbox console. |

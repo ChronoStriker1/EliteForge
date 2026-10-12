@@ -175,10 +175,10 @@ struct SticksEditor: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 18) {
-            stickCard("Left thumbstick", stick: profile.leftStick, x: model.input.leftStickX, y: model.input.leftStickY) { change in
+            stickCard("Left thumbstick", stick: profile.leftStick, x: model.input.rawLeftStickX, y: model.input.rawLeftStickY) { change in
                 model.updateDraft { change(&$0.leftStick) }
             }
-            stickCard("Right thumbstick", stick: profile.rightStick, x: model.input.rightStickX, y: model.input.rightStickY) { change in
+            stickCard("Right thumbstick", stick: profile.rightStick, x: model.input.rawRightStickX, y: model.input.rawRightStickY) { change in
                 model.updateDraft { change(&$0.rightStick) }
             }
         }
@@ -245,9 +245,8 @@ struct SticksEditor: View {
         }
     }
 
-    /// The controller reports the sticks before the active profile's dead
-    /// zone and curve (seen on 5.22.16.0), so the preview always starts
-    /// from the true stick position.
+    /// The live dots use the physical stick position (the 0x0C report), so
+    /// the preview is right whichever profile is active.
     private var previewNote: String {
         "Across: how far you push the stick. Up: what the game gets. Drag the points to shape the response."
     }
@@ -500,10 +499,10 @@ struct TriggersEditor: View {
     var body: some View {
         VStack(spacing: 18) {
             HStack(alignment: .top, spacing: 18) {
-                triggerCard("Left trigger", short: "LT", settings: profile.leftTrigger, lock: model.input.leftTriggerStop, live: model.input.leftTrigger) { value in
+                triggerCard("Left trigger", short: "LT", settings: profile.leftTrigger, lock: model.input.leftTriggerStop, live: model.input.rawLeftTrigger) { value in
                     model.updateDraft { $0.leftTrigger.range = value }
                 }
-                triggerCard("Right trigger", short: "RT", settings: profile.rightTrigger, lock: model.input.rightTriggerStop, live: model.input.rightTrigger) { value in
+                triggerCard("Right trigger", short: "RT", settings: profile.rightTrigger, lock: model.input.rightTriggerStop, live: model.input.rawRightTrigger) { value in
                     model.updateDraft { $0.rightTrigger.range = value }
                 }
             }

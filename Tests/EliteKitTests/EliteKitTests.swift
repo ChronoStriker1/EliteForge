@@ -117,6 +117,22 @@ final class FrameTests: XCTestCase {
         XCTAssertEqual(state.leftTriggerStop, .full)
         XCTAssertEqual(state.rightTriggerStop, .full)
     }
+
+    func testEliteReportCarriesRawAxes() {
+        // Captured on profile 3 with a 30% left trigger range: 0x20 reported
+        // LT 1023 while this report had the physical 319.
+        let payload = [UInt8](hexString: "00 00 3f 01 00 00 8a fd 96 01 84 05 21 fe 00 03 00")!
+        var state = InputState()
+        state.apply(elite: payload)
+        XCTAssertEqual(state.rawLeftTrigger, 319)
+        XCTAssertEqual(state.rawRightTrigger, 0)
+        XCTAssertEqual(state.rawLeftStickX, -630)
+        XCTAssertEqual(state.rawLeftStickY, 406)
+        XCTAssertEqual(state.rawRightStickX, 1412)
+        XCTAssertEqual(state.rawRightStickY, -479)
+        XCTAssertEqual(state.activeSlot, 3)
+        XCTAssertEqual(state.leftTrigger, 0, "the processed values come from 0x20 only")
+    }
 }
 
 final class CodecTests: XCTestCase {

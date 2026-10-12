@@ -3,13 +3,22 @@ import Foundation
 /// Live controller state decoded from GIP input reports.
 public struct InputState: Hashable, Codable, Sendable {
     public var buttons: Set<InputButton> = []
-    /// 0-1023.
+    /// Triggers and sticks as games get them, after the active profile's
+    /// trigger range, dead zones and curves. Triggers 0-1023.
     public var leftTrigger: UInt16 = 0
     public var rightTrigger: UInt16 = 0
     public var leftStickX: Int16 = 0
     public var leftStickY: Int16 = 0
     public var rightStickX: Int16 = 0
     public var rightStickY: Int16 = 0
+    /// The physical trigger and stick positions, before the active profile's
+    /// settings, from the 0x0C report.
+    public var rawLeftTrigger: UInt16 = 0
+    public var rawRightTrigger: UInt16 = 0
+    public var rawLeftStickX: Int16 = 0
+    public var rawLeftStickY: Int16 = 0
+    public var rawRightStickX: Int16 = 0
+    public var rawRightStickY: Int16 = 0
     /// Active hardware profile slot, 0-3.
     public var activeSlot: Int?
     /// Positions of the hair trigger lock switches on the back. The controller
@@ -35,9 +44,16 @@ public struct InputState: Hashable, Codable, Sendable {
         rightStickY = Int16(bitPattern: UInt16(payload[12]) | UInt16(payload[13]) << 8)
     }
 
-    /// Applies a 0x0C Elite report, which carries the active profile slot.
+    /// Applies a 0x0C Elite report: the raw triggers and sticks, the active
+    /// profile slot and the hair trigger locks.
     public mutating func apply(elite payload: [UInt8]) {
         guard payload.count >= 16 else { return }
+        rawLeftTrigger = UInt16(payload[2]) | UInt16(payload[3]) << 8
+        rawRightTrigger = UInt16(payload[4]) | UInt16(payload[5]) << 8
+        rawLeftStickX = Int16(bitPattern: UInt16(payload[6]) | UInt16(payload[7]) << 8)
+        rawLeftStickY = Int16(bitPattern: UInt16(payload[8]) | UInt16(payload[9]) << 8)
+        rawRightStickX = Int16(bitPattern: UInt16(payload[10]) | UInt16(payload[11]) << 8)
+        rawRightStickY = Int16(bitPattern: UInt16(payload[12]) | UInt16(payload[13]) << 8)
         activeSlot = Int(payload[15] & 0x03)
         if payload.count >= 17 {
             leftTriggerStop = TriggerStop(rawValue: payload[16] & 0x03)
