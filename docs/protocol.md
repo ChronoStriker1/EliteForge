@@ -52,7 +52,7 @@ For example, the Accessories app acknowledges a 60-byte page reply with `01 20 5
 
 ## Init
 
-Sent once per capture. Don't re-send it on later HELLOs, except after the controller restarts its session (the reload at the end of a save does this). A restart shows up as HELLOs while the gamepad's own status frames, normally about one a second, have stopped:
+Sent once per capture. Don't re-send it on later HELLOs, except after the controller restarts its session. The reload at the end of a save does this: HELLOs keep coming while the gamepad itself goes quiet, and input stays dead until the init is sent again. Silence alone is not a restart. The gamepad's status frames (`03 20 ...`) come about once a second for roughly 10 s after an init, then every 20 s, the same as in the Windows captures (verified on 5.22.16.0). Treating the first long gap as a restart and re-sending init put the controller into a cycle of a re-init every 14 s, so EliteForge re-sends it only within 15 s of a save. After a save the reload (`05 20 .. 01 05`) is followed by about 2.4 s of silence, one re-init, and normal input.
 
 ```
 05 20 01 01 00                power on
@@ -69,7 +69,7 @@ The controller only sends input reports when something changes. With the sticks 
 
 Encoding the second packet as a normal two-byte payload (`05 20 xx 02 0f 06`) leaves the controller re-announcing forever and never sending input. If every HELLO triggers a fresh init, the controller loops too, because the Bluetooth -> USB packet restarts it.
 
-Send a keepalive every 2 seconds: `09 00 <seq> 09 00 0f 00 00 00 00 ff 00 eb` (rumble off).
+Send a keepalive every 2 seconds: `09 00 <seq> 09 00 0f 00 00 00 00 ff 00 eb` (rumble off). Skip it while a rumble test is running so it doesn't stop the motors early.
 
 ### Client 1: the virtual keyboard
 
@@ -174,6 +174,8 @@ When the Accessories app inverted the right stick, it changed only the normal-la
 - 2-5: LT and RT, 0-1023
 - 6-13: sticks, i16
 - 14: paddles. Bit 0 P1 upper right, bit 1 P2 lower right, bit 2 P3 upper left, bit 3 P4 lower left (verified).
+
+The sticks and triggers in this report don't have the active profile's settings applied. With an 11% stick dead zone and a 30% left trigger range on the active profile, the report still showed stick movement inside the dead zone and a normal trigger ramp (5.22.16.0). Checking what those settings do needs a game or gamepad tester with EliteForge closed. The 0x0C report carries the same fields; whether they're the processed values hasn't been checked.
 
 The 0x0C report carries the active slot in payload byte 15. Byte 16 holds the hair trigger lock positions, `(RT << 2) | LT`, with 0 = full travel, 1 = half, 2 = short (verified on Profile 0 (Default); with a custom profile active it read 0, which looks the same as full). The locks are physical switches with no software setting. The controller detects their position and scales the shorter travel so a full pull still reports 1023.
 

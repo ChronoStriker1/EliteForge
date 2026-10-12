@@ -20,6 +20,7 @@ enum EditorTab: String, CaseIterable, Identifiable {
 struct ProfileEditorView: View {
     @Environment(AppModel.self) private var model
     @State private var tab: EditorTab = .mapping
+    @State private var previewID = UUID()
 
     var body: some View {
         if let profile = model.draft {
@@ -43,7 +44,20 @@ struct ProfileEditorView: View {
             .background(CanvasBackground())
             .navigationTitle(title(profile))
             .toolbar { toolbar(profile) }
+            // While a profile is open, the Xbox button shows its light, saved
+            // or not. Connecting or switching profiles on the controller
+            // brings back the controller's own light, so show it again.
+            .onChange(of: LightPreviewKey(light: profile.light, live: model.isConfiguring, slot: model.status.activeSlot), initial: true) { _, key in
+                if key.live { model.showLightPreview(key.light, owner: previewID) }
+            }
+            .onDisappear { model.endLightPreview(owner: previewID) }
         }
+    }
+
+    private struct LightPreviewKey: Equatable {
+        let light: LightSettings
+        let live: Bool
+        let slot: Int?
     }
 
     private func header(_ profile: EliteProfile) -> some View {
@@ -231,13 +245,11 @@ struct SticksEditor: View {
         }
     }
 
-    /// The controller applies the active profile's saved curve before it
-    /// reports the sticks. On Default that curve is linear, so the preview
-    /// starts from the true stick position.
+    /// The controller reports the sticks before the active profile's dead
+    /// zone and curve (seen on 5.22.16.0), so the preview always starts
+    /// from the true stick position.
     private var previewNote: String {
-        let base = "Across: how far you push the stick. Up: what the game gets. Drag the points to shape the response."
-        guard model.isConfiguring, let slot = model.status.activeSlot, slot != 0 else { return base }
-        return base + " Profile \(slot) is active, so its saved curve is already applied to the live dots. Switch to Profile 0 (Default) for an exact preview."
+        "Across: how far you push the stick. Up: what the game gets. Drag the points to shape the response."
     }
 
     private func liveDeflection(x: Int16, y: Int16) -> Double? {
@@ -669,7 +681,6 @@ struct VibrationEditor: View {
 struct LightEditor: View {
     @Environment(AppModel.self) private var model
     let profile: EliteProfile
-    @State private var previewTask: Task<Void, Never>?
 
     static let swatches: [(String, LightColor?)] = [
         ("White", nil),
@@ -712,7 +723,6 @@ struct LightEditor: View {
                         Slider(value: Binding(get: { Double(profile.light.brightness) }, set: { value in
                             let brightness = UInt8(value.rounded())
                             model.updateDraft { $0.light.brightness = brightness }
-                            preview(brightness: brightness, color: profile.light.color)
                         }), in: 0...100)
                         .tint(.xbox)
                     }
@@ -723,23 +733,17 @@ struct LightEditor: View {
             }
         }
         .frame(maxWidth: 820)
-        .onDisappear {
-            previewTask?.cancel()
-            if model.isConfiguring { Task { await model.endLightPreview() } }
-        }
     }
 
     private var previewNote: String {
-        if !model.isConfiguring { return "Configure the controller to preview the light on it." }
-        if model.status.activeSlot != 0 { return "Switch the controller to Profile 0 (Default) to preview the light on it." }
-        return "Changes preview on the controller's Xbox button for a moment."
+        if !model.isConfiguring { return "Connect the controller over USB to see this light on it." }
+        return "While this profile is open, the controller's Xbox button shows its light, including changes you haven't saved. It goes back when you leave the profile."
     }
 
     private func swatch(name: String, color: LightColor?) -> some View {
         let selected = profile.light.color == color
         return Button {
             model.updateDraft { $0.light.color = color }
-            preview(brightness: profile.light.brightness, color: color)
         } label: {
             Circle()
                 .fill(color.map(Color.init(rgb:)) ?? .white)
@@ -757,18 +761,7 @@ struct LightEditor: View {
         }, set: { newValue in
             guard let rgb = LightColor(newValue) else { return }
             model.updateDraft { $0.light.color = rgb }
-            preview(brightness: profile.light.brightness, color: rgb)
         })
-    }
-
-    private func preview(brightness: UInt8, color: LightColor?) {
-        guard model.isConfiguring, model.status.activeSlot == 0 else { return }
-        previewTask?.cancel()
-        previewTask = Task {
-            await model.previewLight(brightness: brightness, color: color)
-            try? await Task.sleep(for: .seconds(2.5))
-            if !Task.isCancelled { await model.endLightPreview() }
-        }
     }
 }
 
@@ -794,20 +787,25 @@ struct XboxButtonGlow: View {
     var body: some View {
         let level = max(0.06, min(brightness, 100) / 100)
         let light = color.map(Color.init(rgb:)) ?? .white
-        ZStack {
-            Circle()
-                .fill(light.opacity(0.55 * level))
-                .blur(radius: 34 * level)
-                .padding(10)
-            Circle()
-                .fill(RadialGradient(colors: [Color(white: 0.22), Color(white: 0.04)], center: UnitPoint(x: 0.35, y: 0.3), startRadius: 2, endRadius: 110))
-                .overlay(Circle().strokeBorder(.white.opacity(0.12), lineWidth: 1.5))
-                .padding(18)
-                .shadow(color: .black.opacity(0.6), radius: 8, y: 4)
-            XboxLogo()
-                .fill(light.opacity(0.35 + 0.65 * level))
-                .shadow(color: light.opacity(level), radius: 14 * level)
-                .padding(48)
+        GeometryReader { proxy in
+            // Drawn for 190 points; everything scales so smaller copies look the same.
+            let scale = min(proxy.size.width, proxy.size.height) / 190
+            ZStack {
+                Circle()
+                    .fill(light.opacity(0.55 * level))
+                    .blur(radius: 34 * level * scale)
+                    .padding(10 * scale)
+                Circle()
+                    .fill(RadialGradient(colors: [Color(white: 0.22), Color(white: 0.04)], center: UnitPoint(x: 0.35, y: 0.3), startRadius: 2 * scale, endRadius: 110 * scale))
+                    .overlay(Circle().strokeBorder(.white.opacity(0.12), lineWidth: max(1, 1.5 * scale)))
+                    .padding(18 * scale)
+                    .shadow(color: .black.opacity(0.6), radius: 8 * scale, y: 4 * scale)
+                XboxLogo()
+                    .fill(light.opacity(0.35 + 0.65 * level))
+                    .shadow(color: light.opacity(level), radius: 14 * level * scale)
+                    .padding(48 * scale)
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
         .animation(.easeOut(duration: 0.2), value: brightness)
         .animation(.easeOut(duration: 0.2), value: color)

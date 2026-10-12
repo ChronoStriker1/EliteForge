@@ -229,7 +229,7 @@ final class ControllerManager: @unchecked Sendable {
         // The init sequence (first capture, or after a save restarts the
         // controller) ends any light override; put the Default colour back.
         controller.onInit = { [weak self] in
-            self?.operations.asyncAfter(deadline: .now() + 0.5) { self?.applyDefaultLight() }
+            self?.operations.asyncAfter(deadline: .now() + 0.5) { self?.learnSlotThenApplyLight() }
         }
         controller.trace = { [weak self] line in
             guard let self else { return }
@@ -256,7 +256,7 @@ final class ControllerManager: @unchecked Sendable {
             status.serialNumber = controller.serialNumber
             return true
         }
-        if promoted { operations.async { [weak self] in self?.applyDefaultLight() } }
+        if promoted { operations.async { [weak self] in self?.learnSlotThenApplyLight() } }
         guard promoted else {
             lock.withLock { if opening === controller { opening = nil } }
             controller.close()
@@ -343,6 +343,34 @@ final class ControllerManager: @unchecked Sendable {
     }
 
     // MARK: Default-profile light
+
+    /// After a capture the active profile is unknown until input changes, so
+    /// ask the controller; then show the Default colour if it's on Default,
+    /// without waiting for a button press. Runs on `operations`.
+    private func learnSlotThenApplyLight() {
+        let target = lock.withLock { () -> EliteUSBController? in
+            guard let controller, controller.isOpen, status.activeSlot == nil else { return nil }
+            return controller
+        }
+        if let target {
+            do {
+                if let slot = try target.session.probeActiveSlot() {
+                    // A report that arrived meanwhile is newer; keep it.
+                    let learned = lock.withLock { () -> Bool in
+                        guard target === controller, status.activeSlot == nil else { return false }
+                        status.activeSlot = slot
+                        input.activeSlot = slot
+                        inputDirty = true
+                        return true
+                    }
+                    if learned { broadcastStatus() }
+                }
+            } catch {
+                log.error("active profile: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        applyDefaultLight()
+    }
 
     /// Shows the Default-profile colour if the controller is on Default.
     /// Runs on `operations`: it waits for the controller's reply.

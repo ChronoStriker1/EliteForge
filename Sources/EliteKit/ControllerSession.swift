@@ -174,6 +174,22 @@ public final class ControllerSession: @unchecked Sendable {
         }
     }
 
+    /// Asks the controller which profile is active, since its reports only
+    /// say so when input changes. The unlock is accepted on Default and
+    /// refused on a custom profile with one of that profile's pages. nil if
+    /// the page isn't one of the three profiles'.
+    public func probeActiveSlot() throws -> Int? {
+        let reply = try vendorRequest([VendorCommand.unlock], what: "unlock", accepting: [0x00, Self.statusActiveSlot]) {
+            $0.first == VendorCommand.unlock
+        }
+        if reply[1] == 0x00 { return 0 }
+        guard reply.count >= 3 else { return nil }
+        return (1...3).first { slot in
+            guard let pages = ProfilePages.addresses(slot: slot) else { return false }
+            return [pages.normalMapping, pages.normalCurves, pages.shiftMapping, pages.shiftCurves].contains(reply[2])
+        }
+    }
+
     public func initExtendedReports() throws {
         try vendorRequest([VendorCommand.initExtended, 0x00], what: "extended reports") { $0.first == VendorCommand.initExtended }
     }
@@ -292,9 +308,11 @@ public final class ControllerSession: @unchecked Sendable {
 
     // MARK: Live effects
 
+    /// With a custom profile active the controller refuses the unlock, but
+    /// the colour frame is sent anyway: the preview doesn't write anything.
     public func previewLight(_ color: RGBColor?) throws {
         try exclusive {
-            try unlock()
+            do { try unlock() } catch ControllerError.customProfileActive {}
             try link.send(GIPPackets.ledPreview(sequence, color: color))
         }
     }

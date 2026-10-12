@@ -83,6 +83,8 @@ final class AppModel {
         }
     }
     private var defaultLightTask: Task<Void, Never>?
+    private var lightPreviewTask: Task<Void, Never>?
+    private var lightPreviewOwner: UUID?
     private static let defaultLightKey = "defaultProfileLight"
 
     private static func loadDefaultLight() -> LightSettings? {
@@ -593,19 +595,38 @@ final class AppModel {
 
     // MARK: Live effects
 
-    /// Shows the light on the controller, scaled by brightness the way the
-    /// Accessories app previews it. nil colour means the default white.
-    func previewLight(brightness: UInt8, color: LightColor?) async {
-        let base = color ?? LightColor(red: 255, green: 255, blue: 255)
-        do {
-            _ = try await helper.perform(.previewLight(base.scaled(by: Int(brightness))))
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+    /// Shows `light` on the controller's Xbox button, scaled by brightness the
+    /// way the Accessories app previews it, until `owner` ends the preview.
+    func showLightPreview(_ light: LightSettings, owner: UUID) {
+        lightPreviewOwner = owner
+        sendLightPreview(light)
     }
 
-    func endLightPreview() async {
-        _ = try? await helper.perform(.endLightPreview)
+    /// Brings back the controller's own light: the Default-profile colour if
+    /// one is set and Default is active, else the active profile's. Does
+    /// nothing if another view has taken over the preview since.
+    func endLightPreview(owner: UUID) {
+        guard lightPreviewOwner == owner else { return }
+        lightPreviewOwner = nil
+        sendLightPreview(nil)
+    }
+
+    /// Requests go out in order, and quick changes such as a slider drag
+    /// send only the latest.
+    private func sendLightPreview(_ light: LightSettings?) {
+        let previous = lightPreviewTask
+        previous?.cancel()
+        lightPreviewTask = Task {
+            await previous?.value
+            try? await Task.sleep(for: .milliseconds(60))
+            guard !Task.isCancelled, isConfiguring else { return }
+            if let light {
+                let base = light.color ?? LightColor(red: 255, green: 255, blue: 255)
+                _ = try? await helper.perform(.previewLight(base.scaled(by: Int(light.brightness))))
+            } else {
+                _ = try? await helper.perform(.endLightPreview)
+            }
+        }
     }
 
     func rumble(leftGrip: UInt8 = 0, rightGrip: UInt8 = 0, leftTrigger: UInt8 = 0, rightTrigger: UInt8 = 0, seconds: Double = 0.8) async {

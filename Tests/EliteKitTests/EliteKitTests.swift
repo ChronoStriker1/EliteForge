@@ -432,6 +432,15 @@ final class SessionTests: XCTestCase {
         XCTAssertNoThrow(try session.writeSlot(2, pages: .factoryDefault))
     }
 
+    func testProbeActiveSlot() throws {
+        let sim = SimulatedController()
+        let session = makeSession(sim)
+        for slot in 0...3 {
+            sim.activeSlot = slot
+            XCTAssertEqual(try session.probeActiveSlot(), slot)
+        }
+    }
+
     func testRejectsDefaultSlot() {
         let session = makeSession(SimulatedController())
         XCTAssertThrowsError(try session.writeSlot(0, pages: .factoryDefault)) { error in

@@ -70,7 +70,8 @@ public final class EliteUSBController: GIPLink, @unchecked Sendable {
     /// Last status, input or reply frame from the gamepad itself.
     private var lastLiveFrame = Date()
     /// Set after a profile save, whose final reload restarts the controller.
-    private var restartExpected = false
+    /// Only then does a HELLO during silence mean the init must be re-sent.
+    private var restartExpectedUntil: Date?
     private let started = Date()
     private let stateLock = NSLock()
     private var lastRumble = Date.distantPast
@@ -340,7 +341,11 @@ public final class EliteUSBController: GIPLink, @unchecked Sendable {
 
     public func send(_ frame: GIPFrame) throws {
         let bytes = frame.bytes
-        if frame.command == GIPCommand.rumble { stateLock.withLock { lastRumble = Date() } }
+        // Only a running motor counts as a rumble test; the rumble-off
+        // keepalive must not hold back the next keepalive.
+        if frame.command == GIPCommand.rumble, frame.payload.count >= 6, frame.payload[2...5].contains(where: { $0 > 0 }) {
+            stateLock.withLock { lastRumble = Date() }
+        }
         try sendQueue.sync {
             guard !stateLock.withLock({ closed }), let outPipe else { throw ControllerError.notConnected }
             trace?("\(timestamp) > \(bytes.hexString)")
@@ -355,7 +360,7 @@ public final class EliteUSBController: GIPLink, @unchecked Sendable {
     }
 
     public func expectRestart() {
-        stateLock.withLock { restartExpected = true }
+        stateLock.withLock { restartExpectedUntil = Date().addingTimeInterval(15) }
     }
 
     // MARK: Private
@@ -478,18 +483,24 @@ public final class EliteUSBController: GIPLink, @unchecked Sendable {
         case GIPCommand.hello:
             let info = DeviceInfo(hello: frame.payload)
             stateLock.withLock { storedDeviceInfo = info }
-            // Client 1 (the virtual keyboard) repeats HELLO every 504 ms while
-            // the gamepad sends status frames about once a second; that needs
-            // nothing. When the gamepad has been silent for a while too, it
-            // has restarted its session and needs the init sequence again or
-            // input stays dead. Status frames can be 1.5 s apart, so wait
-            // longer than that, and less after a save, which always restarts.
+            // Client 1 (the virtual keyboard) repeats HELLO every 504 ms; that
+            // needs nothing. The reload at the end of a save restarts the
+            // gamepad's session, which then needs the init sequence again or
+            // input stays dead; the gamepad goes quiet while it restarts.
+            // Status frames also pause for seconds on their own (Windows
+            // captures show them 20 s apart), so silence alone isn't a
+            // restart. Treating it as one re-sent init every 14 s on firmware
+            // 5.22.16.0.
             let restarted = stateLock.withLock { () -> Bool in
                 helloSeen = true
-                let silence = Date().timeIntervalSince(lastLiveFrame)
-                guard initSent, silence > (restartExpected ? 2.2 : 4.0) else { return false }
+                guard initSent, let until = restartExpectedUntil else { return false }
+                guard Date() < until else {
+                    restartExpectedUntil = nil
+                    return false
+                }
+                guard Date().timeIntervalSince(lastLiveFrame) > 2.2 else { return false }
                 initSent = false
-                restartExpected = false
+                restartExpectedUntil = nil
                 return true
             }
             if restarted { trace?("\(timestamp) controller restarted, re-sending init") }

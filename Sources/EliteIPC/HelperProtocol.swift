@@ -6,7 +6,7 @@ public let helperServiceName = "com.eliteforge.helper"
 
 /// Bumped whenever the request/reply format changes, so the app can tell
 /// the installed helper is out of date and offer to reinstall it.
-public let helperProtocolVersion = 12
+public let helperProtocolVersion = 14
 
 /// The helper's XPC interface. Requests and replies are JSON-encoded
 /// `HelperRequest` / `HelperReply` values, which keeps the XPC surface to one method.
