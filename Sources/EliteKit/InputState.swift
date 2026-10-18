@@ -28,6 +28,15 @@ public struct InputState: Hashable, Codable, Sendable {
 
     public init() {}
 
+    /// Whether `control` is held. A trigger counts once it's pulled past 6%.
+    public func isPressed(_ control: RemappableControl) -> Bool {
+        switch control {
+        case .leftTrigger: leftTrigger > 60
+        case .rightTrigger: rightTrigger > 60
+        default: control.inputButton.map(buttons.contains) ?? false
+        }
+    }
+
     /// Applies a 0x20 input report. Paddles are only present in the
     /// extended report that the init sequence turns on.
     public mutating func apply(input payload: [UInt8]) {

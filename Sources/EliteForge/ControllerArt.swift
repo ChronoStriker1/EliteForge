@@ -83,37 +83,9 @@ struct EliteControllerArt: View {
         }
     }
 
-    static func inputButton(_ control: RemappableControl) -> InputButton {
-        switch control {
-        case .a: .a
-        case .b: .b
-        case .x: .x
-        case .y: .y
-        case .dpadUp: .dpadUp
-        case .dpadDown: .dpadDown
-        case .dpadLeft: .dpadLeft
-        case .dpadRight: .dpadRight
-        case .leftBumper: .leftBumper
-        case .rightBumper: .rightBumper
-        case .leftStick: .leftStick
-        case .rightStick: .rightStick
-        case .paddleUpperRight: .paddleUpperRight
-        case .paddleLowerRight: .paddleLowerRight
-        case .paddleUpperLeft: .paddleUpperLeft
-        case .paddleLowerLeft: .paddleLowerLeft
-        case .leftTrigger, .rightTrigger: .guide
-        }
-    }
-
     // MARK: State
 
-    private func pressed(_ control: RemappableControl) -> Bool {
-        switch control {
-        case .leftTrigger: input.leftTrigger > 60
-        case .rightTrigger: input.rightTrigger > 60
-        default: input.buttons.contains(Self.inputButton(control))
-        }
-    }
+    private func pressed(_ control: RemappableControl) -> Bool { input.isPressed(control) }
 
     private func selected(_ control: RemappableControl) -> Bool { highlighted.contains(control) }
 

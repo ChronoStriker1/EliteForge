@@ -104,6 +104,7 @@ final class FrameTests: XCTestCase {
         XCTAssertEqual(state.leftStickX, 32767)
         state.apply(guide: [0x01])
         XCTAssertTrue(state.buttons.contains(.guide))
+        XCTAssertEqual(RemappableControl.allCases.filter(state.isPressed), [.a, .leftBumper, .leftTrigger, .paddleUpperLeft])
     }
 
     func testEliteReport() {

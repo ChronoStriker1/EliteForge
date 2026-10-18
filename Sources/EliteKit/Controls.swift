@@ -107,6 +107,29 @@ public enum RemappableControl: String, CaseIterable, Codable, CodingKeyRepresent
         }
     }
 
+    /// This control's bit in input reports. Triggers are analog and have none.
+    public var inputButton: InputButton? {
+        switch self {
+        case .a: .a
+        case .b: .b
+        case .x: .x
+        case .y: .y
+        case .dpadUp: .dpadUp
+        case .dpadDown: .dpadDown
+        case .dpadLeft: .dpadLeft
+        case .dpadRight: .dpadRight
+        case .leftBumper: .leftBumper
+        case .rightBumper: .rightBumper
+        case .leftStick: .leftStick
+        case .rightStick: .rightStick
+        case .paddleUpperRight: .paddleUpperRight
+        case .paddleLowerRight: .paddleLowerRight
+        case .paddleUpperLeft: .paddleUpperLeft
+        case .paddleLowerLeft: .paddleLowerLeft
+        case .leftTrigger, .rightTrigger: nil
+        }
+    }
+
     /// The button this control produces when it isn't remapped: its own
     /// button, or for a paddle the Accessories default. nil for triggers.
     public var standardOutput: GamepadButton? {

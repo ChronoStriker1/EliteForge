@@ -89,7 +89,7 @@ struct MappingView: View {
         path.addLine(to: elbow)
         path.addLine(to: end)
         let isSelected = selected == control
-        let pressed = model.input.buttons.contains(EliteControllerArt.inputButton(control))
+        let pressed = model.input.isPressed(control)
         let changed = profile.assignment(for: control, shift: shiftLayer) != .standard
         let color: Color = isSelected ? .selection : (pressed ? .xboxGlow : (changed ? .white.opacity(0.45) : .white.opacity(0.16)))
         let active = isSelected || pressed
@@ -101,7 +101,7 @@ struct MappingView: View {
         let assignment = profile.assignment(for: control, shift: shiftLayer)
         let isSelected = selected == control
         let changed = assignment != .standard
-        let pressed = model.input.buttons.contains(EliteControllerArt.inputButton(control))
+        let pressed = model.input.isPressed(control)
         return Button {
             withAnimation(.snappy(duration: 0.2)) { selected = control }
         } label: {
