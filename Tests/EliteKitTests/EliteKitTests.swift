@@ -363,6 +363,13 @@ final class CodecTests: XCTestCase {
         XCTAssertGreaterThan(CurvePreset.aggressive.curve.output(for: 0.3), 0.3)
         XCTAssertLessThan(CurvePreset.delay.curve.output(for: 0.3), 0.3)
     }
+
+    func testPresetsUseAccessoriesNamesAndKeepRawValues() throws {
+        XCTAssertEqual(CurvePreset.allCases.map(\.label), ["Default", "Slow start", "Fast start", "Instant", "Smooth"])
+        let decoded = try JSONDecoder().decode([CurvePreset].self, from: Data(#"["standard", "aggressive", "delay"]"#.utf8))
+        XCTAssertEqual(decoded.map(\.label), ["Default", "Fast start", "Slow start"])
+        XCTAssertEqual(String(decoding: try JSONEncoder().encode(CurvePreset.delay), as: UTF8.self), #""delay""#)
+    }
 }
 
 final class SessionTests: XCTestCase {

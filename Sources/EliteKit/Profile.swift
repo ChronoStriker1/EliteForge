@@ -80,21 +80,22 @@ public struct StickCurve: Hashable, Codable, Sendable {
     public var preset: CurvePreset? { CurvePreset.allCases.first { $0.curve == self } }
 }
 
-/// Named response curves. `.standard` is the controller's factory curve and
-/// matches what the Accessories app writes. The other shapes follow the
-/// Accessories presets of the same names, but their exact point values have
-/// not been captured from the Windows app yet.
+/// Named response curves, in the Accessories app's order. `.standard` is the
+/// controller's factory curve and matches what the Accessories app writes.
+/// The other shapes follow the Accessories presets shown in `label`, but
+/// their exact point values have not been captured from the Windows app yet.
+/// The case names predate the Accessories labels; they stay as the raw values.
 public enum CurvePreset: String, CaseIterable, Codable, Sendable, Identifiable {
-    case standard, aggressive, instant, delay, smooth
+    case standard, delay, aggressive, instant, smooth
 
     public var id: String { rawValue }
 
     public var label: String {
         switch self {
         case .standard: "Default"
-        case .aggressive: "Aggressive"
+        case .delay: "Slow start"
+        case .aggressive: "Fast start"
         case .instant: "Instant"
-        case .delay: "Delay"
         case .smooth: "Smooth"
         }
     }
