@@ -551,15 +551,33 @@ struct CurveEditor: View {
 struct TriggersEditor: View {
     @Environment(AppModel.self) private var model
     let profile: EliteProfile
+    /// The Accessories app's mirror option. Only the ranges are stored, so
+    /// it reads as off whenever they differ.
+    @State private var sameRange = true
+
+    private var linked: Bool { sameRange && profile.leftTrigger.range == profile.rightTrigger.range }
 
     var body: some View {
         VStack(spacing: 18) {
+            Toggle("Same range for both triggers", isOn: Binding(get: { linked }, set: { on in
+                sameRange = on
+                if on { model.updateDraft { $0.rightTrigger.range = $0.leftTrigger.range } }
+            }))
+            .toggleStyle(.switch)
+            .tint(.xbox)
+            .frame(maxWidth: .infinity, alignment: .leading)
             HStack(alignment: .top, spacing: 18) {
                 triggerCard("Left trigger", short: "LT", settings: profile.leftTrigger, lock: model.input.leftTriggerStop, live: model.input.rawLeftTrigger) { value in
-                    model.updateDraft { $0.leftTrigger.range = value }
+                    model.updateDraft {
+                        $0.leftTrigger.range = value
+                        if linked { $0.rightTrigger.range = value }
+                    }
                 }
                 triggerCard("Right trigger", short: "RT", settings: profile.rightTrigger, lock: model.input.rightTriggerStop, live: model.input.rawRightTrigger) { value in
-                    model.updateDraft { $0.rightTrigger.range = value }
+                    model.updateDraft {
+                        $0.rightTrigger.range = value
+                        if linked { $0.leftTrigger.range = value }
+                    }
                 }
             }
             .glassGroup()
