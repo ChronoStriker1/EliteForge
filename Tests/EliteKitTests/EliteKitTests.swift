@@ -22,6 +22,13 @@ enum Captured {
     /// Profile 1 read from the test controller on macOS.
     static let macProfile1 = page("11 0d 07 04 06 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f 00 00 00 00 00 00 00 00 00 00 00 64 64 64 64 ff 00 ff 00 00 00 ff 00 ff 00 00 00 64 00 00 ff 00 30 30 00 00 00 00 00")
 
+    /// The same page as firmware older than 5.21.3242.0 keeps it: version 1.0, curves cut to 28 bytes.
+    static func version1_0(_ page: [UInt8]) -> [UInt8] {
+        var page = Array(page.prefix(page.count == MappingLayout.size ? page.count : ProfileFormat.v1_0.curvesSize))
+        page[0] = 0x10
+        return page
+    }
+
     static func slot(normal: [UInt8], shift: [UInt8]? = nil, curves: [UInt8] = CurvesLayout.defaultPage) -> SlotPages {
         SlotPages(normalMapping: normal, normalCurves: curves, shiftMapping: shift ?? restoredDefault, shiftCurves: CurvesLayout.defaultPage)
     }
@@ -146,7 +153,7 @@ final class CodecTests: XCTestCase {
         for page in captured {
             let pages = SlotPages(normalMapping: page, normalCurves: Captured.rightStickInverted, shiftMapping: page, shiftCurves: CurvesLayout.defaultPage)
             let profile = try ProfileCodec.decode(pages, name: "x")
-            XCTAssertEqual(ProfileCodec.encode(profile), pages, page.hexString)
+            XCTAssertEqual(ProfileCodec.encode(profile, format: .v1_1), pages, page.hexString)
         }
     }
 
@@ -191,12 +198,12 @@ final class CodecTests: XCTestCase {
         // Start from default and make the same edits as the Windows captures.
         var profile = try ProfileCodec.decode(.factoryDefault, name: "x")
         profile.setAssignment(.key(KeyboardKey(usage: 0x09)), for: .rightTrigger, shift: false)
-        XCTAssertEqual(ProfileCodec.encode(profile).normalMapping, Captured.rightTriggerF)
-        XCTAssertEqual(ProfileCodec.encode(profile).shiftMapping, Captured.restoredDefault)
+        XCTAssertEqual(ProfileCodec.encode(profile, format: .v1_1).normalMapping, Captured.rightTriggerF)
+        XCTAssertEqual(ProfileCodec.encode(profile, format: .v1_1).shiftMapping, Captured.restoredDefault)
 
         profile = try ProfileCodec.decode(.factoryDefault, name: "x")
         profile.rightStick.invertY = true
-        XCTAssertEqual(ProfileCodec.encode(profile).normalCurves, Captured.rightStickInverted)
+        XCTAssertEqual(ProfileCodec.encode(profile, format: .v1_1).normalCurves, Captured.rightStickInverted)
     }
 
     func testTriggerEditsPreserveStickRangesAndOtherMappingBytes() throws {
@@ -210,7 +217,7 @@ final class CodecTests: XCTestCase {
         var profile = try ProfileCodec.decode(base, name: "x")
         profile.leftTrigger.range = 0x80
         profile.rightTrigger.range = 0x40
-        let encoded = ProfileCodec.encode(profile)
+        let encoded = ProfileCodec.encode(profile, format: .v1_1)
         for (original, updated) in [(normal, encoded.normalMapping), (shift, encoded.shiftMapping)] {
             var expected = original
             expected[32] = 0x80
@@ -230,7 +237,7 @@ final class CodecTests: XCTestCase {
         XCTAssertEqual(profile.shiftControl, .leftBumper)
         XCTAssertNil(profile.buttons[.paddleLowerLeft])
         XCTAssertEqual(profile.shiftButtons[.leftBumper], .shift)
-        let pages = ProfileCodec.encode(profile)
+        let pages = ProfileCodec.encode(profile, format: .v1_1)
         XCTAssertEqual(pages.normalMapping[RemappableControl.leftBumper.mappingOffset], MappingLayout.codeShift)
         XCTAssertEqual(pages.shiftMapping[RemappableControl.leftBumper.mappingOffset], MappingLayout.codeShift)
 
@@ -245,7 +252,7 @@ final class CodecTests: XCTestCase {
         XCTAssertEqual(profile.rightStick.deadZonePercent, 11)
         XCTAssertEqual(profile.leftStick.preset, .standard)
         XCTAssertTrue(profile.hasDefaultSettings)
-        let pages = ProfileCodec.encode(profile)
+        let pages = ProfileCodec.encode(profile, format: .v1_1)
         XCTAssertEqual(Array(pages.normalCurves[1..<3]), [28, 0])
         XCTAssertEqual(Array(pages.normalCurves[13..<15]), [28, 0])
         XCTAssertTrue(try ProfileCodec.decode(pages, name: "x").hasDefaultSettings)
@@ -282,27 +289,63 @@ final class CodecTests: XCTestCase {
         let pages = SlotPages(normalMapping: MappingLayout.defaultPage, normalCurves: curves, shiftMapping: MappingLayout.defaultPage, shiftCurves: curves)
         var profile = try ProfileCodec.decode(pages, name: "x")
         profile.setAssignment(.button(.b), for: .a, shift: false)
-        let encoded = ProfileCodec.encode(profile)
+        let encoded = ProfileCodec.encode(profile, format: .v1_1)
         XCTAssertEqual(Array(encoded.normalCurves[7..<13]), yCurve)
         XCTAssertEqual(Array(encoded.shiftCurves[7..<13]), yCurve)
 
         profile.leftStick.curve = CurvePreset.aggressive.curve
-        let edited = ProfileCodec.encode(profile)
+        let edited = ProfileCodec.encode(profile, format: .v1_1)
         XCTAssertEqual(Array(edited.normalCurves[1..<7]), Array(edited.normalCurves[7..<13]))
     }
 
-    func testSavingBlankSlotMarksPagesSaved() throws {
-        func blank(_ page: [UInt8]) -> [UInt8] {
-            var page = page
-            page[0] = 0x10
-            return page
-        }
-        let pages = SlotPages(normalMapping: blank(MappingLayout.defaultPage), normalCurves: blank(CurvesLayout.defaultPage),
-                              shiftMapping: blank(MappingLayout.defaultPage), shiftCurves: blank(CurvesLayout.defaultPage))
-        var profile = try ProfileCodec.decode(pages, name: "x")
+    func testSavingWritesTheFirmwaresFormatToEveryPage() throws {
+        // A slot last written in format 1.0, saved for 1.1 firmware and for older firmware.
+        let old = SlotPages(normalMapping: Captured.version1_0(Captured.restoredDefault), normalCurves: Captured.version1_0(Captured.rightStickInverted),
+                            shiftMapping: Captured.version1_0(Captured.restoredDefault), shiftCurves: Captured.version1_0(CurvesLayout.defaultPage))
+        var profile = try ProfileCodec.decode(old, name: "x")
+        XCTAssertTrue(profile.rightStick.invertY)
         profile.setAssignment(.button(.a), for: .y, shift: false)
-        let encoded = ProfileCodec.encode(profile)
-        XCTAssertEqual([encoded.normalMapping[0], encoded.normalCurves[0], encoded.shiftMapping[0], encoded.shiftCurves[0]], [0x11, 0x11, 0x11, 0x11])
+
+        let current = ProfileCodec.encode(profile, format: .v1_1)
+        XCTAssertEqual([current.normalMapping[0], current.normalCurves[0], current.shiftMapping[0], current.shiftCurves[0]], [0x11, 0x11, 0x11, 0x11])
+        XCTAssertEqual(current.normalCurves, Captured.rightStickInverted, "bytes 28-42 are added from the default page")
+        XCTAssertEqual(current.shiftCurves, CurvesLayout.defaultPage)
+
+        let older = ProfileCodec.encode(try ProfileCodec.decode(current, name: "x"), format: .v1_0)
+        XCTAssertEqual([older.normalMapping[0], older.normalCurves[0], older.shiftMapping[0], older.shiftCurves[0]], [0x10, 0x10, 0x10, 0x10])
+        XCTAssertEqual(older.normalCurves, Captured.version1_0(Captured.rightStickInverted))
+        XCTAssertEqual(Array(older.normalMapping[1...]), Array(current.normalMapping[1...]))
+    }
+
+    func testVersion1_0PagesRoundTrip() throws {
+        for page in captured {
+            let pages = SlotPages(normalMapping: Captured.version1_0(page), normalCurves: Captured.version1_0(Captured.rightStickInverted),
+                                  shiftMapping: Captured.version1_0(page), shiftCurves: Captured.version1_0(CurvesLayout.defaultPage))
+            XCTAssertTrue(pages.isValid)
+            XCTAssertEqual(ProfileCodec.encode(try ProfileCodec.decode(pages, name: "x"), format: .v1_0), pages, page.hexString)
+        }
+        // Curves pages of different formats, or of neither size, aren't a slot.
+        var mixed = Captured.slot(normal: Captured.restoredDefault)
+        mixed.shiftCurves = Captured.version1_0(CurvesLayout.defaultPage)
+        XCTAssertFalse(mixed.isValid)
+        mixed.shiftCurves = Array(CurvesLayout.defaultPage.prefix(30))
+        mixed.normalCurves = mixed.shiftCurves
+        XCTAssertFalse(mixed.isValid)
+    }
+
+    func testFormatFollowsTheFirmware() {
+        // The Accessories app's threshold is 5.21.3242.0 (Devices.App.dll 0x180c21b78).
+        XCTAssertEqual(ProfileFormat(firmware: "5.21.3242.0"), .v1_1)
+        XCTAssertEqual(ProfileFormat(firmware: "5.22.16.0"), .v1_1)
+        XCTAssertEqual(ProfileFormat(firmware: "6.0.0.0"), .v1_1)
+        XCTAssertEqual(ProfileFormat(firmware: "5.21.3241.9"), .v1_0)
+        XCTAssertEqual(ProfileFormat(firmware: "5.11.3113.0"), .v1_0)
+        XCTAssertEqual(ProfileFormat(firmware: "4.8.1908.0"), .v1_0)
+        XCTAssertEqual(ProfileFormat(firmware: nil), .v1_1, "unknown firmware writes what EliteForge always has")
+        XCTAssertEqual(ProfileFormat(firmware: "5.21"), .v1_1)
+        // The firmware as the controller announces it in HELLO.
+        let hello = [UInt8](repeating: 0, count: 12) + [5, 0, 21, 0, 0x99, 0x0C, 0, 0] + [UInt8](repeating: 1, count: 8)
+        XCTAssertEqual(ProfileFormat(firmware: DeviceInfo(hello: hello)?.firmware), .v1_0, "5.21.3225.0")
     }
 
     func testDeadZoneLivesInTheFirstCurvePoint() throws {
@@ -341,7 +384,7 @@ final class CodecTests: XCTestCase {
         // It reaches the curves page for both axes of the stick.
         var profile = try ProfileCodec.decode(.factoryDefault, name: "x")
         profile.leftStick.deadZone = 38
-        let pages = ProfileCodec.encode(profile)
+        let pages = ProfileCodec.encode(profile, format: .v1_1)
         XCTAssertEqual(Array(pages.normalCurves[1..<3]), [38, 0])
         XCTAssertEqual(Array(pages.normalCurves[7..<9]), [38, 0])
         XCTAssertEqual(try ProfileCodec.decode(pages, name: "x").leftStick.deadZone, 38)
@@ -436,7 +479,7 @@ final class CodecTests: XCTestCase {
             var profile = try ProfileCodec.decode(.factoryDefault, name: "x")
             profile.leftStick.apply(preset)
             profile.rightStick.apply(preset)
-            let pages = ProfileCodec.encode(profile)
+            let pages = ProfileCodec.encode(profile, format: .v1_1)
             for curves in [pages.normalCurves, pages.shiftCurves] {
                 XCTAssertEqual(Array(curves[1..<25]), axis + axis + axis + axis, preset.label)
             }
@@ -445,7 +488,7 @@ final class CodecTests: XCTestCase {
 
             // A dead zone replaces point 1 only, and the preset still shows.
             profile.leftStick.deadZone = 28
-            let zoned = ProfileCodec.encode(profile)
+            let zoned = ProfileCodec.encode(profile, format: .v1_1)
             XCTAssertEqual(Array(zoned.normalCurves[1..<13]), [28, 0] + axis[2...] + [28, 0] + axis[2...], preset.label)
             XCTAssertEqual(try ProfileCodec.decode(zoned, name: "x").leftStick.preset, preset)
         }
@@ -515,7 +558,7 @@ final class SessionTests: XCTestCase {
         let session = makeSession(sim)
         var profile = EliteProfile.factoryDefault()
         profile.setAssignment(.button(.a), for: .y, shift: false)
-        let pages = ProfileCodec.encode(profile)
+        let pages = ProfileCodec.encode(profile, format: .v1_1)
         try session.writeSlot(2, pages: pages)
 
         XCTAssertEqual(try session.readSlot(2), pages)
@@ -538,7 +581,7 @@ final class SessionTests: XCTestCase {
         // with the previous contents must not be mistaken for the new one.
         var profile = EliteProfile.factoryDefault()
         profile.setAssignment(.button(.b), for: .a, shift: false)
-        let pages = ProfileCodec.encode(profile)
+        let pages = ProfileCodec.encode(profile, format: .v1_1)
         XCTAssertNoThrow(try session.writeSlot(1, pages: pages))
         XCTAssertEqual(sim.pages[0x20], pages.normalMapping)
     }
@@ -553,7 +596,7 @@ final class SessionTests: XCTestCase {
         _ = try session.readSlot(1)
         var profile = EliteProfile.factoryDefault()
         profile.setAssignment(.button(.x), for: .a, shift: false)
-        let pages = ProfileCodec.encode(profile)
+        let pages = ProfileCodec.encode(profile, format: .v1_1)
         XCTAssertNoThrow(try session.writeSlot(1, pages: pages))
         XCTAssertEqual(try session.readSlot(1), pages)
     }
@@ -593,6 +636,23 @@ final class SessionTests: XCTestCase {
             sim.activeSlot = slot
             XCTAssertEqual(try session.probeActiveSlot(), slot)
         }
+    }
+
+    func testReadsAndWritesAVersion1_0Slot() throws {
+        let sim = SimulatedController()
+        let session = makeSession(sim)
+        let address = ProfilePages.addresses(slot: 2)!
+        for page in [address.normalMapping, address.shiftMapping] { sim.pages[page] = Captured.version1_0(MappingLayout.defaultPage) }
+        for page in [address.normalCurves, address.shiftCurves] { sim.pages[page] = Captured.version1_0(Captured.rightStickInverted) }
+
+        var profile = try ProfileCodec.decode(try session.readSlot(2), name: "x")
+        XCTAssertEqual(profile.basePages.normalCurves.count, 28)
+        XCTAssertTrue(profile.rightStick.invertY)
+        profile.setAssignment(.button(.b), for: .a, shift: false)
+        let pages = ProfileCodec.encode(profile, format: .v1_0)
+        try session.writeSlot(2, pages: pages)
+        XCTAssertEqual(sim.pages[address.normalCurves], Captured.version1_0(Captured.rightStickInverted))
+        XCTAssertEqual(sim.pages[address.normalMapping]?[5], 0x05)
     }
 
     func testRejectsDefaultSlot() {

@@ -304,6 +304,29 @@ public struct LightSettings: Hashable, Codable, Sendable {
     }
 }
 
+/// Version of the page layout, in byte 0 of every page: major in the high
+/// nibble, minor in the low. The mapping page is the same size in both; 1.1
+/// adds curves bytes 28-42 (sticky inputs and the Adaptive Controller's
+/// extra inputs).
+public enum ProfileFormat: UInt8, CaseIterable, Comparable, Sendable {
+    case v1_0 = 0x10
+    case v1_1 = 0x11
+
+    /// The format the Accessories app writes for a controller: 1.1 from
+    /// firmware 5.21.3242.0 on, whatever format the slot was in. The
+    /// controller only reports its firmware at power-up, so it can be
+    /// unknown; that gives 1.1, which EliteForge has always written and which
+    /// was tested on 5.22.16.0.
+    public init(firmware: String?) {
+        let parts = firmware?.split(separator: ".").compactMap { Int($0) } ?? []
+        self = parts.count == 4 && parts.lexicographicallyPrecedes([5, 21, 3242, 0]) ? .v1_0 : .v1_1
+    }
+
+    public var curvesSize: Int { self == .v1_0 ? 28 : 43 }
+
+    public static func < (lhs: ProfileFormat, rhs: ProfileFormat) -> Bool { lhs.rawValue < rhs.rawValue }
+}
+
 /// The four raw pages that make up one controller slot.
 public struct SlotPages: Hashable, Codable, Sendable {
     public var normalMapping: [UInt8]
@@ -323,9 +346,10 @@ public struct SlotPages: Hashable, Codable, Sendable {
         shiftMapping: MappingLayout.defaultPage, shiftCurves: CurvesLayout.defaultPage
     )
 
+    /// Mapping pages of 56 bytes and both curves pages the size of one format.
     public var isValid: Bool {
         normalMapping.count == MappingLayout.size && shiftMapping.count == MappingLayout.size
-            && normalCurves.count == CurvesLayout.size && shiftCurves.count == CurvesLayout.size
+            && normalCurves.count == shiftCurves.count && ProfileFormat.allCases.contains { $0.curvesSize == normalCurves.count }
     }
 }
 
@@ -437,9 +461,6 @@ public struct EliteProfile: Hashable, Codable, Sendable, Identifiable {
 
 /// Converts between `EliteProfile` and the raw slot pages.
 public enum ProfileCodec {
-    /// Byte 0 bit that is set once a slot has been saved.
-    public static let savedFlag: UInt8 = 0x01
-
     public enum CodecError: Error, LocalizedError {
         case badPageSize
         public var errorDescription: String? { "The controller returned profile pages of an unexpected size." }
@@ -470,20 +491,24 @@ public enum ProfileCodec {
         )
     }
 
-    public static func encode(_ profile: EliteProfile) -> SlotPages {
+    /// Pages in `format`, which the controller's firmware decides
+    /// (`ProfileFormat(firmware:)`), not the pages the profile was read from.
+    public static func encode(_ profile: EliteProfile, format: ProfileFormat) -> SlotPages {
         let base = profile.basePages.isValid ? profile.basePages : .factoryDefault
-        // Byte 0 bit 0 is clear on a never-written slot (0x10). The
-        // Accessories app always writes 0x11, so mark every page as saved.
-        func saved(_ page: [UInt8]) -> [UInt8] {
+        func versioned(_ page: [UInt8]) -> [UInt8] {
             var page = page
-            page[0] |= savedFlag
+            page[0] = format.rawValue
             return page
         }
+        // A curves page in the other format is cut short or filled in from the default page.
+        func curves(_ page: [UInt8]) -> [UInt8] {
+            versioned(Array((page + CurvesLayout.defaultPage.dropFirst(page.count)).prefix(format.curvesSize)))
+        }
         return SlotPages(
-            normalMapping: saved(encodeMapping(base.normalMapping, profile: profile, assignments: profile.buttons)),
-            normalCurves: saved(encodeCurves(base.normalCurves, profile: profile)),
-            shiftMapping: saved(encodeMapping(base.shiftMapping, profile: profile, assignments: profile.shiftButtons)),
-            shiftCurves: saved(encodeCurves(base.shiftCurves, profile: profile))
+            normalMapping: versioned(encodeMapping(base.normalMapping, profile: profile, assignments: profile.buttons)),
+            normalCurves: curves(encodeCurves(base.normalCurves, profile: profile)),
+            shiftMapping: versioned(encodeMapping(base.shiftMapping, profile: profile, assignments: profile.shiftButtons)),
+            shiftCurves: curves(encodeCurves(base.shiftCurves, profile: profile))
         )
     }
 

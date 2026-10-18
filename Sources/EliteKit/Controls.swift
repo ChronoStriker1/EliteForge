@@ -232,9 +232,8 @@ public enum MappingLayout {
         "ff 00 ff 00 00 00 ff 00 ff 00 00 00 64 ff 00 00 00 30 30 00 00 00 00 00")!
 }
 
-/// Byte layout of the 43-byte curves page.
+/// Byte layout of the curves page: 43 bytes, or 28 in format 1.0.
 public enum CurvesLayout {
-    public static let size = 43
     /// Six bytes per axis: three (x, y) control points. Axis order LX, LY, RX, RY.
     public static let curveOffsets = [1, 7, 13, 19]
     /// Bit 0 inverts the left stick Y axis, bit 1 the right stick Y axis.

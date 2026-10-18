@@ -160,8 +160,15 @@ func slotArgument(_ args: [String], _ index: Int) -> Int {
     return slot
 }
 
+/// The page format the connected controller's firmware takes.
+func controllerFormat(_ backend: Backend) throws -> ProfileFormat {
+    guard case .status(let status) = try backend.perform(.status) else { return ProfileFormat(firmware: nil) }
+    return ProfileFormat(firmware: status.info?.firmware)
+}
+
 func describe(_ profile: EliteProfile, pages: SlotPages) -> String {
-    var lines: [String] = []
+    let version = pages.normalMapping[0]
+    var lines = [String(format: "Page format %d.%d, curves page %d bytes", version >> 4, version & 0x0F, pages.normalCurves.count)]
     func layer(_ title: String, shift: Bool) {
         let changed = RemappableControl.allCases.filter { profile.assignment(for: $0, shift: shift) != .standard }
         lines.append("\(title):" + (changed.isEmpty ? " all default" : ""))
@@ -266,13 +273,13 @@ func run() throws {
         guard args.count > 2 else { fail("missing file") }
         let data = try Data(contentsOf: URL(fileURLWithPath: args[2]))
         let pages = command == "write"
-            ? ProfileCodec.encode(try JSONDecoder().decode(EliteProfile.self, from: data))
+            ? ProfileCodec.encode(try JSONDecoder().decode(EliteProfile.self, from: data), format: try controllerFormat(backend))
             : try JSONDecoder().decode(SlotPages.self, from: data)
         _ = try backend.perform(.writeSlot(slot, pages, serial: nil))
         print("wrote profile \(slot)")
     case "reset":
         let slot = slotArgument(args, 1)
-        _ = try backend.perform(.writeSlot(slot, ProfileCodec.encode(.factoryDefault(name: "Profile \(slot)")), serial: nil))
+        _ = try backend.perform(.writeSlot(slot, ProfileCodec.encode(.factoryDefault(name: "Profile \(slot)"), format: try controllerFormat(backend)), serial: nil))
         print("profile \(slot) restored to defaults (\(StickSettings.recommended.deadZonePercent)% stick dead zone)")
     case "light":
         guard args.count > 1 else { fail("missing colour") }

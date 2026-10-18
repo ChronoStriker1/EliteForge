@@ -33,7 +33,8 @@ final class AppModel {
     var controllerName = ""
     /// Profiles currently stored on the controller, by slot.
     var slots: [Int: EliteProfile] = [:]
-    /// Slots that have never been written (the controller flags them as blank).
+    /// Slots whose pages are in an older format than the firmware writes,
+    /// which is how a slot that was never saved on this firmware reads.
     var blankSlots: Set<Int> = []
     /// Serial of the controller `slots` were read from.
     private var slotsSerial: String?
@@ -129,6 +130,9 @@ final class AppModel {
               let data = UserDefaults.standard.data(forKey: "deviceInfo." + serial) else { return nil }
         return try? JSONDecoder().decode(DeviceInfo.self, from: data)
     }
+
+    /// Page format for the connected controller's firmware.
+    var profileFormat: ProfileFormat { ProfileFormat(firmware: deviceInfo?.firmware) }
 
     private func rememberDeviceInfo(_ status: ControllerStatus) {
         guard let info = status.info, let serial = status.serialNumber,
@@ -350,7 +354,7 @@ final class AppModel {
             busyMessage = "Reading profile \(slot)…"
             let pages = try await helper.readSlot(slot)
             guard generation == sessionGeneration else { return }
-            if pages.normalMapping.first.map({ $0 & 0x01 == 0 }) ?? false {
+            if pages.normalMapping.first.map({ $0 < profileFormat.rawValue }) ?? false {
                 blankSlots.insert(slot)
             } else {
                 blankSlots.remove(slot)
@@ -518,7 +522,7 @@ final class AppModel {
         }
         busyMessage = "Saving to profile \(slot)…"
         defer { busyMessage = nil }
-        let pages = ProfileCodec.encode(profile)
+        let pages = ProfileCodec.encode(profile, format: profileFormat)
         do {
             _ = try await helper.perform(.writeSlot(slot, pages, serial: target))
             // The session ended meanwhile; the next connect reads the slots again.
