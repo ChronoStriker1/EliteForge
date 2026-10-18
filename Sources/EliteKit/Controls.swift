@@ -107,6 +107,13 @@ public enum RemappableControl: String, CaseIterable, Codable, CodingKeyRepresent
         }
     }
 
+    /// The button this control produces when it isn't remapped: its own
+    /// button, or for a paddle the Accessories default. nil for triggers.
+    public var standardOutput: GamepadButton? {
+        if let index = Self.paddles.firstIndex(of: self) { return GamepadButton(rawValue: MappingLayout.defaultPaddleOutputs[index]) }
+        return nativeButton
+    }
+
     public var isPaddle: Bool {
         switch self {
         case .paddleUpperRight, .paddleLowerRight, .paddleUpperLeft, .paddleLowerLeft: true

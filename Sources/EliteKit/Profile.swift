@@ -342,6 +342,26 @@ public struct EliteProfile: Hashable, Codable, Sendable, Identifiable {
             && vibration == VibrationSettings() && light == LightSettings()
     }
 
+    /// The gamepad button `control` produces in a layer. Triggers, unmapped
+    /// and shift controls, and keyboard keys produce none.
+    public func output(of control: RemappableControl, shift: Bool) -> GamepadButton? {
+        switch assignment(for: control, shift: shift) {
+        case .standard: control.standardOutput
+        case .button(let button): button
+        case .disabled, .shift, .key: nil
+        }
+    }
+
+    /// The Accessories app warns when nothing on the normal layer produces
+    /// one of these, since A confirms and B goes back on Xbox and in most games.
+    public static let essentialButtons: [GamepadButton] = [.a, .b]
+
+    /// Essential buttons that no control produces on the normal layer.
+    public var unmappedEssentialButtons: [GamepadButton] {
+        let produced = Set(RemappableControl.allCases.compactMap { output(of: $0, shift: false) })
+        return Self.essentialButtons.filter { !produced.contains($0) }
+    }
+
     public var shiftControl: RemappableControl? {
         RemappableControl.allCases.first { buttons[$0] == .shift }
     }
@@ -437,9 +457,7 @@ public enum ProfileCodec {
 
     static func code(for assignment: Assignment, control: RemappableControl) -> UInt8 {
         switch assignment {
-        case .standard:
-            if let index = RemappableControl.paddles.firstIndex(of: control) { return MappingLayout.defaultPaddleOutputs[index] }
-            return control.nativeButton?.rawValue ?? 0x00
+        case .standard: return control.standardOutput?.rawValue ?? 0x00
         case .disabled: return MappingLayout.codeDisabled
         case .shift: return MappingLayout.codeShift
         case .button(let button): return button.rawValue

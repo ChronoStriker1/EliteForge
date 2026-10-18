@@ -356,6 +356,29 @@ final class CodecTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(EliteProfile.self, from: data), profile)
     }
 
+    func testUnmappedEssentialButtons() {
+        var profile = EliteProfile.factoryDefault()
+        XCTAssertEqual(profile.unmappedEssentialButtons, [])
+
+        // P3 still gives A by default, so moving A elsewhere isn't enough.
+        profile.setAssignment(.button(.x), for: .a, shift: false)
+        XCTAssertEqual(profile.unmappedEssentialButtons, [])
+        profile.setAssignment(.disabled, for: .paddleUpperLeft, shift: false)
+        XCTAssertEqual(profile.unmappedEssentialButtons, [.a])
+
+        // Only the normal layer counts.
+        profile.setAssignment(.button(.a), for: .y, shift: true)
+        XCTAssertEqual(profile.unmappedEssentialButtons, [.a])
+        profile.setAssignment(.button(.a), for: .y, shift: false)
+        XCTAssertEqual(profile.unmappedEssentialButtons, [])
+
+        profile.setAssignment(.shift, for: .b, shift: false)
+        profile.setAssignment(.key(KeyboardKey(usage: 0x05)), for: .paddleUpperRight, shift: false)
+        XCTAssertEqual(profile.unmappedEssentialButtons, [.b])
+        profile.setAssignment(.standard, for: .y, shift: false)
+        XCTAssertEqual(profile.unmappedEssentialButtons, [.a, .b])
+    }
+
     func testHexColour() {
         let orange = EliteKit.RGBColor(red: 0xFF, green: 0x6D, blue: 0x20)
         XCTAssertEqual(orange.hex, "#FF6D20")

@@ -21,6 +21,8 @@ struct ProfileEditorView: View {
     @Environment(AppModel.self) private var model
     @State private var tab: EditorTab = .mapping
     @State private var previewID = UUID()
+    /// Slot waiting for the user to confirm saving a profile without A or B.
+    @State private var unmappedSaveSlot: Int?
 
     var body: some View {
         if let profile = model.draft {
@@ -28,6 +30,17 @@ struct ProfileEditorView: View {
                 header(profile)
                     .padding(.horizontal, 20)
                     .padding(.top, 14)
+                if let warning = Self.unmappedWarning(profile) {
+                    Label(warning, systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .glassPanel(cornerRadius: 14, tint: .orange)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 10)
+                }
                 GlassSegmentedPicker(options: EditorTab.allCases, selection: $tab) { $0.label }
                     .padding(.vertical, 12)
                 Group {
@@ -51,6 +64,32 @@ struct ProfileEditorView: View {
                 if key.live { model.showLightPreview(key.light, owner: previewID) }
             }
             .onDisappear { model.endLightPreview(owner: previewID) }
+            .confirmationDialog(
+                Self.unmappedWarning(profile) ?? "",
+                isPresented: Binding(get: { unmappedSaveSlot != nil }, set: { if !$0 { unmappedSaveSlot = nil } }),
+                titleVisibility: .visible,
+                presenting: unmappedSaveSlot
+            ) { slot in
+                Button("Save Anyway") { Task { await model.saveDraft(toSlot: slot) } }
+                Button("Cancel", role: .cancel) {}
+            } message: { _ in
+                Text("Xbox menus and most games use A to select and B to go back. You can map them to any button or paddle on the Mapping tab.")
+            }
+        }
+    }
+
+    /// The Accessories app's warning when nothing on the normal layer gives A or B.
+    static func unmappedWarning(_ profile: EliteProfile) -> String? {
+        let buttons = profile.unmappedEssentialButtons.map(\.label)
+        if buttons.isEmpty { return nil }
+        return buttons.count == 1 ? "The \(buttons[0]) button is not mapped" : "The \(buttons.joined(separator: " and ")) buttons are not mapped"
+    }
+
+    private func save(_ profile: EliteProfile, toSlot slot: Int) {
+        if profile.unmappedEssentialButtons.isEmpty {
+            Task { await model.saveDraft(toSlot: slot) }
+        } else {
+            unmappedSaveSlot = slot
         }
     }
 
@@ -135,7 +174,7 @@ struct ProfileEditorView: View {
                     Label("More", systemImage: "ellipsis")
                 }
                 Button {
-                    Task { await model.saveDraft(toSlot: slot) }
+                    save(profile, toSlot: slot)
                 } label: {
                     Label("Save to Controller", systemImage: "square.and.arrow.down")
                         .labelStyle(.titleAndIcon)
@@ -149,7 +188,7 @@ struct ProfileEditorView: View {
                 Button { export(profile) } label: { Label("Export", systemImage: "square.and.arrow.up") }
                 Menu {
                     ForEach(1...3, id: \.self) { slot in
-                        Button("Profile \(slot)") { Task { await model.saveDraft(toSlot: slot) } }
+                        Button("Profile \(slot)") { save(profile, toSlot: slot) }
                     }
                 } label: {
                     Label("Load onto Profile", systemImage: "square.and.arrow.down")

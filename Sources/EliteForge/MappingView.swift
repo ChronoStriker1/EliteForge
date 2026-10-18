@@ -130,10 +130,7 @@ struct MappingView: View {
     private func chipDetail(_ control: RemappableControl, _ assignment: Assignment) -> String {
         switch assignment {
         case .standard:
-            if let index = RemappableControl.paddles.firstIndex(of: control),
-               let button = GamepadButton(rawValue: MappingLayout.defaultPaddleOutputs[index]) {
-                return "→ \(button.shortLabel) (default)"
-            }
+            if control.isPaddle, let button = control.standardOutput { return "→ \(button.shortLabel) (default)" }
             return "Default"
         case .disabled: return "Unmapped"
         case .shift: return "Shift"
@@ -209,10 +206,7 @@ struct MappingView: View {
     }
 
     private func defaultLabel(_ control: RemappableControl) -> String {
-        if let index = RemappableControl.paddles.firstIndex(of: control),
-           let button = GamepadButton(rawValue: MappingLayout.defaultPaddleOutputs[index]) {
-            return "Default (\(button.label))"
-        }
+        if control.isPaddle, let button = control.standardOutput { return "Default (\(button.label))" }
         return "Default"
     }
 }
