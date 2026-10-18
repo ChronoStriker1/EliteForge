@@ -657,6 +657,21 @@ final class QuickRemapTests: XCTestCase {
         XCTAssertEqual(detector.update(input([.x]), at: at(4200)), .x, "a new press picks it again")
     }
 
+    func testAPickedControlStaysPickedUntilReleased() {
+        var detector = QuickRemapDetector()
+        _ = detector.update(input([.x]), at: at(0))
+        XCTAssertEqual(detector.update(input([.x]), at: at(1000)), .x)
+        XCTAssertNil(detector.update(input([.x, .b]), at: at(1200)), "tapping B while X is still down")
+        XCTAssertNil(detector.update(input([.x]), at: at(1400)))
+        XCTAssertNil(detector.deadline)
+        XCTAssertNil(detector.update(input([.x]), at: at(2400)), "X hasn't been let go")
+        XCTAssertNil(detector.update(input([.x]), at: at(5000)))
+
+        XCTAssertNil(detector.update(input([]), at: at(5100)))
+        _ = detector.update(input([.x]), at: at(5200))
+        XCTAssertEqual(detector.update(input([.x]), at: at(6200)), .x)
+    }
+
     func testOtherReportsDuringTheHoldKeepItsStart() {
         // Stick and trigger movement sends reports with the same buttons.
         var detector = QuickRemapDetector()

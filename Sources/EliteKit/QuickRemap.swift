@@ -11,7 +11,8 @@ public struct QuickRemapDetector: Equatable, Sendable {
     private enum Phase: Equatable, Sendable {
         case idle
         case holding(RemappableControl, since: ContinuousClock.Instant)
-        /// Picked already; nothing more until it's let go.
+        /// Picked already; nothing more until it's let go, even while other
+        /// buttons are pressed with it.
         case picked(RemappableControl)
     }
 
@@ -29,7 +30,13 @@ public struct QuickRemapDetector: Equatable, Sendable {
     public mutating func update(_ input: InputState, at time: ContinuousClock.Instant) -> RemappableControl? {
         // On a custom profile the report carries the remapped buttons, not
         // the ones pressed, so only Profile 0 (Default) says which control it is.
-        guard input.activeSlot == 0, let control = Self.heldControl(input.buttons) else {
+        guard input.activeSlot == 0 else {
+            phase = .idle
+            return nil
+        }
+        let held = RemappableControl.allCases.filter { $0.inputButton.map(input.buttons.contains) ?? false }
+        if case .picked(let spent) = phase, held.contains(spent) { return nil }
+        guard let control = Self.single(held) else {
             phase = .idle
             return nil
         }
@@ -37,7 +44,7 @@ public struct QuickRemapDetector: Equatable, Sendable {
         case .holding(control, let since) where time - since >= Self.holdTime:
             phase = .picked(control)
             return control
-        case .holding(control, _), .picked(control):
+        case .holding(control, _):
             return nil
         default:
             phase = .holding(control, since: time)
@@ -45,10 +52,9 @@ public struct QuickRemapDetector: Equatable, Sendable {
         }
     }
 
-    /// The single control behind `buttons`. A paddle also reports the button
-    /// it's mapped to, so a paddle bit outranks the buttons.
-    static func heldControl(_ buttons: Set<InputButton>) -> RemappableControl? {
-        let held = RemappableControl.allCases.filter { $0.inputButton.map(buttons.contains) ?? false }
+    /// The one control among `held`. A paddle also reports the button it's
+    /// mapped to, so a paddle outranks the buttons.
+    static func single(_ held: [RemappableControl]) -> RemappableControl? {
         let paddles = held.filter(\.isPaddle)
         let candidates = paddles.isEmpty ? held : paddles
         return candidates.count == 1 ? candidates[0] : nil
