@@ -639,6 +639,11 @@ final class AppModel {
         }
     }
 
+    /// Identifies the controller in hand, like the Accessories app's buzz.
+    func buzz() async {
+        await rumble(leftGrip: 60, rightGrip: 60, leftTrigger: 60, rightTrigger: 60, seconds: 0.5)
+    }
+
     // MARK: Calibration
 
     func readCalibration(_ target: CalibrationTarget) async throws -> CalibrationReading {

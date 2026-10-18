@@ -43,6 +43,13 @@ struct ControllerView: View {
                 }
                 Spacer()
                 if model.isConfiguring {
+                    Button {
+                        Task { await model.buzz() }
+                    } label: {
+                        Label("Buzz", systemImage: "waveform")
+                    }
+                    .glassButton()
+                    .help("Vibrate all four motors to find this controller")
                     Label("Live", systemImage: "dot.radiowaves.left.and.right")
                         .font(.callout.weight(.semibold))
                         .padding(.horizontal, 12)
