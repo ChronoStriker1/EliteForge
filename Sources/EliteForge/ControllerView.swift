@@ -239,6 +239,11 @@ struct DefaultLightCard: View {
                             ColorPicker("Custom colour", selection: customColor, supportsOpacity: false)
                                 .labelsHidden()
                                 .help("Custom colour")
+                            HexColorField(color: light.color) { color in
+                                var updated = light
+                                updated.color = color
+                                model.defaultLight = updated
+                            }
                         }
                         HStack {
                             Text("Brightness").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)

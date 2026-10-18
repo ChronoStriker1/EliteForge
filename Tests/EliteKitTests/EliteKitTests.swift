@@ -356,6 +356,18 @@ final class CodecTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(EliteProfile.self, from: data), profile)
     }
 
+    func testHexColour() {
+        let orange = EliteKit.RGBColor(red: 0xFF, green: 0x6D, blue: 0x20)
+        XCTAssertEqual(orange.hex, "#FF6D20")
+        XCTAssertEqual(EliteKit.RGBColor(hex: "#FF6D20"), orange)
+        XCTAssertEqual(EliteKit.RGBColor(hex: "ff6d20"), orange)
+        XCTAssertEqual(EliteKit.RGBColor(hex: " #Ff6D20 "), orange)
+        XCTAssertEqual(EliteKit.RGBColor(hex: EliteKit.RGBColor(red: 0, green: 1, blue: 0xFE).hex), EliteKit.RGBColor(red: 0, green: 1, blue: 0xFE))
+        for bad in ["", "#", "#FF6D2", "#FF6D200", "##FF6D20", "#FF 6D 20", "#GG6D20", "+F6D20", "#FF6D2Z"] {
+            XCTAssertNil(EliteKit.RGBColor(hex: bad), bad)
+        }
+    }
+
     func testCurveInterpolation() {
         let linear = CurvePreset.standard.curve
         XCTAssertEqual(linear.output(for: 0.5), 0.5, accuracy: 0.01)

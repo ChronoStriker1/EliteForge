@@ -706,6 +706,7 @@ struct LightEditor: View {
                             ColorPicker("Custom colour", selection: customColor, supportsOpacity: false)
                                 .labelsHidden()
                                 .help("Custom colour")
+                            HexColorField(color: profile.light.color) { color in model.updateDraft { $0.light.color = color } }
                         }
                     }
                     VStack(alignment: .leading, spacing: 6) {
@@ -759,6 +760,40 @@ struct LightEditor: View {
             guard let rgb = LightColor(newValue) else { return }
             model.updateDraft { $0.light.color = rgb }
         })
+    }
+}
+
+/// `#RRGGBB` entry for a light colour. A complete code applies as it's
+/// typed, like picking a swatch; anything else is outlined in red.
+struct HexColorField: View {
+    /// nil is the default white.
+    let color: LightColor?
+    let apply: (LightColor) -> Void
+    @State private var text = ""
+
+    private var shown: LightColor { color ?? LightColor(red: 255, green: 255, blue: 255) }
+
+    var body: some View {
+        TextField("#RRGGBB", text: $text)
+            .textFieldStyle(.plain)
+            .font(.callout.monospaced())
+            .frame(width: 76)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Color.black.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(LightColor(hex: text) == nil ? Color.red.opacity(0.85) : .white.opacity(0.12)))
+            .help("Colour as #RRGGBB")
+            // Comparing colours rather than text leaves a code that's being
+            // typed alone, and typing white keeps the default white.
+            .onChange(of: shown, initial: true) { _, shown in
+                if LightColor(hex: text) != shown { text = shown.hex }
+            }
+            .onChange(of: text) { _, text in
+                if let parsed = LightColor(hex: text), parsed != shown { apply(parsed) }
+            }
+            .onSubmit {
+                if let parsed = LightColor(hex: text) { text = parsed.hex }
+            }
     }
 }
 

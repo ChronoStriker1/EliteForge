@@ -11,12 +11,16 @@ public struct RGBColor: Hashable, Codable, Sendable {
         self.blue = blue
     }
 
+    /// Parses `#RRGGBB`, with or without the `#`, in either case.
     public init?(hex: String) {
-        guard let bytes = [UInt8](hexString: hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))), bytes.count == 3 else { return nil }
-        self.init(red: bytes[0], green: bytes[1], blue: bytes[2])
+        var digits = Substring(hex.trimmingCharacters(in: .whitespaces))
+        if digits.first == "#" { digits = digits.dropFirst() }
+        guard digits.count == 6, digits.allSatisfy(\.isHexDigit), let value = UInt32(digits, radix: 16) else { return nil }
+        self.init(red: UInt8(value >> 16), green: UInt8(value >> 8 & 0xFF), blue: UInt8(value & 0xFF))
     }
 
-    public var hex: String { String(format: "%02X%02X%02X", red, green, blue) }
+    /// `#RRGGBB`, upper case.
+    public var hex: String { String(format: "#%02X%02X%02X", red, green, blue) }
 
     public func scaled(by brightness: Int) -> RGBColor {
         let factor = Double(max(0, min(brightness, 100))) / 100

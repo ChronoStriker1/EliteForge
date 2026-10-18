@@ -178,7 +178,7 @@ func describe(_ profile: EliteProfile, pages: SlotPages) -> String {
     lines.append("Trigger range: left \(profile.leftTrigger.rangePercent)%, right \(profile.rightTrigger.rangePercent)%")
     let v = profile.vibration
     lines.append("Vibration: left grip \(v.leftGrip)%, right grip \(v.rightGrip)%, left trigger \(v.leftTrigger)%, right trigger \(v.rightTrigger)%")
-    lines.append("Xbox button: brightness \(profile.light.brightness)%, colour \(profile.light.color.map { "#" + $0.hex } ?? "default")")
+    lines.append("Xbox button: brightness \(profile.light.brightness)%, colour \(profile.light.color?.hex ?? "default")")
     return lines.joined(separator: "\n")
 }
 
