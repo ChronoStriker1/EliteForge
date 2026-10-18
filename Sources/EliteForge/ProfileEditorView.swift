@@ -23,6 +23,9 @@ struct ProfileEditorView: View {
     @State private var previewID = UUID()
     /// Slot waiting for the user to confirm saving a profile without A or B.
     @State private var unmappedSaveSlot: Int?
+    @State private var mappingSelection: RemappableControl? = .paddleUpperRight
+    @State private var pickerOpen = false
+    @State private var quickRemap = QuickRemapDetector()
 
     var body: some View {
         if let profile = model.draft {
@@ -45,7 +48,7 @@ struct ProfileEditorView: View {
                     .padding(.vertical, 12)
                 Group {
                     switch tab {
-                    case .mapping: MappingView(profile: profile)
+                    case .mapping: MappingView(profile: profile, selected: $mappingSelection, pickerOpen: $pickerOpen)
                     case .sticks: ScrollView { SticksEditor(profile: profile).padding(20) }
                     case .triggers: ScrollView { TriggersEditor(profile: profile).padding(20) }
                     case .vibration: ScrollView { VibrationEditor(profile: profile).padding(20) }
@@ -64,6 +67,13 @@ struct ProfileEditorView: View {
                 if key.live { model.showLightPreview(key.light, owner: previewID) }
             }
             .onDisappear { model.endLightPreview(owner: previewID) }
+            .onChange(of: model.input) { _, input in detectQuickRemap(input) }
+            // A held button sends no more reports, so look again when the hold is long enough.
+            .task(id: quickRemap.deadline) {
+                guard let deadline = quickRemap.deadline else { return }
+                try? await Task.sleep(until: deadline, clock: .continuous)
+                if !Task.isCancelled { detectQuickRemap(model.input) }
+            }
             .confirmationDialog(
                 Self.unmappedWarning(profile) ?? "",
                 isPresented: Binding(get: { unmappedSaveSlot != nil }, set: { if !$0 { unmappedSaveSlot = nil } }),
@@ -83,6 +93,13 @@ struct ProfileEditorView: View {
         let buttons = profile.unmappedEssentialButtons.map(\.label)
         if buttons.isEmpty { return nil }
         return buttons.count == 1 ? "The \(buttons[0]) button is not mapped" : "The \(buttons.joined(separator: " and ")) buttons are not mapped"
+    }
+
+    private func detectQuickRemap(_ input: InputState) {
+        guard let control = quickRemap.update(model.isConfiguring ? input : InputState(), at: .now) else { return }
+        tab = .mapping
+        mappingSelection = control
+        pickerOpen = true
     }
 
     private func save(_ profile: EliteProfile, toSlot slot: Int) {

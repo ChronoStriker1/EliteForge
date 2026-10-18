@@ -630,3 +630,79 @@ final class CalibrationTests: XCTestCase {
         XCTAssertEqual(try session.readCalibration(.leftTrigger).values, [1070, 1353, 1896, 3341])
     }
 }
+
+final class QuickRemapTests: XCTestCase {
+    let start = ContinuousClock.now
+
+    func input(_ buttons: Set<InputButton>, slot: Int? = 0) -> InputState {
+        var state = InputState()
+        state.buttons = buttons
+        state.activeSlot = slot
+        return state
+    }
+
+    func at(_ milliseconds: Int) -> ContinuousClock.Instant { start + .milliseconds(milliseconds) }
+
+    func testHoldPicksTheControlOnce() {
+        var detector = QuickRemapDetector()
+        XCTAssertNil(detector.update(input([.x]), at: at(0)))
+        XCTAssertEqual(detector.deadline, at(1000))
+        XCTAssertNil(detector.update(input([.x]), at: at(999)))
+        XCTAssertEqual(detector.update(input([.x]), at: at(1000)), .x)
+        XCTAssertNil(detector.deadline)
+        XCTAssertNil(detector.update(input([.x]), at: at(3000)), "still the same press")
+
+        XCTAssertNil(detector.update(input([]), at: at(3100)))
+        XCTAssertNil(detector.update(input([.x]), at: at(3200)))
+        XCTAssertEqual(detector.update(input([.x]), at: at(4200)), .x, "a new press picks it again")
+    }
+
+    func testOtherReportsDuringTheHoldKeepItsStart() {
+        // Stick and trigger movement sends reports with the same buttons.
+        var detector = QuickRemapDetector()
+        var moved = input([.dpadLeft])
+        _ = detector.update(moved, at: at(0))
+        moved.leftStickX = 9000
+        moved.rightTrigger = 400
+        XCTAssertNil(detector.update(moved, at: at(600)))
+        XCTAssertEqual(detector.update(moved, at: at(1000)), .dpadLeft)
+    }
+
+    func testChangingOrAddingAControlRestarts() {
+        var detector = QuickRemapDetector()
+        _ = detector.update(input([.a]), at: at(0))
+        XCTAssertNil(detector.update(input([.a, .b]), at: at(500)))
+        XCTAssertNil(detector.deadline, "two controls at once isn't a quick remap")
+        XCTAssertNil(detector.update(input([.b]), at: at(800)))
+        XCTAssertNil(detector.update(input([.b]), at: at(1500)))
+        XCTAssertEqual(detector.update(input([.b]), at: at(1800)), .b)
+    }
+
+    func testPaddleOutranksTheButtonItReports() {
+        var detector = QuickRemapDetector()
+        _ = detector.update(input([.rightBumper, .paddleUpperRight]), at: at(0))
+        XCTAssertEqual(detector.update(input([.rightBumper, .paddleUpperRight]), at: at(1000)), .paddleUpperRight)
+    }
+
+    func testIgnoresButtonsThatCantBeRemapped() {
+        var detector = QuickRemapDetector()
+        _ = detector.update(input([.menu, .leftStick]), at: at(0))
+        XCTAssertEqual(detector.update(input([.leftStick, .guide]), at: at(1000)), .leftStick)
+        XCTAssertNil(detector.update(input([.view]), at: at(1100)))
+        XCTAssertNil(detector.deadline)
+    }
+
+    func testOnlyOnTheDefaultProfile() {
+        var detector = QuickRemapDetector()
+        for slot in [1, nil] {
+            _ = detector.update(input([.a], slot: slot), at: at(0))
+            XCTAssertNil(detector.update(input([.a], slot: slot), at: at(2000)))
+            XCTAssertNil(detector.deadline)
+        }
+        _ = detector.update(input([.a]), at: at(2000))
+        XCTAssertNil(detector.update(input([.a], slot: 2), at: at(2500)), "switching profile mid-hold cancels it")
+        XCTAssertNil(detector.update(input([.a]), at: at(3000)))
+        XCTAssertNil(detector.update(input([.a]), at: at(3999)))
+        XCTAssertEqual(detector.update(input([.a]), at: at(4000)), .a)
+    }
+}
