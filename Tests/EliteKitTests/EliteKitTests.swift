@@ -427,6 +427,42 @@ final class CodecTests: XCTestCase {
         XCTAssertLessThan(CurvePreset.delay.curve.output(for: 0.3), 0.3)
     }
 
+    func testCurveOutputFollowsTheFirmware() {
+        // Expected values, in 15-bit units, worked through the firmware's
+        // arithmetic: bytes scaled by 0x10050608, points 2 and 3 placed above
+        // point 1 and the segments mapped by 0x1004e0ca (0x10050612).
+        func output(_ curve: StickCurve, _ input: Int) -> Int { Int((curve.output(for: Double(input) / 32767) * 32767).rounded()) }
+        func curve(_ v: [UInt8]) -> StickCurve { StickCurve(points: [CurvePoint(x: v[0], y: v[1]), CurvePoint(x: v[2], y: v[3]), CurvePoint(x: v[4], y: v[5])]) }
+
+        let deadZone = curve([28, 0, 0x7F, 0x7F, 0xBF, 0xBF])
+        XCTAssertEqual([0, 3598, 3599, 9830, 16384, 20000, 26000, 32767].map { output(deadZone, $0) }, [0, 0, 1, 7000, 14363, 18425, 25165, 32767])
+        XCTAssertEqual(deadZone.placedPoints.map { [Int(($0.x * 32767).rounded()), Int(($0.y * 32767).rounded())] }, [[3598, 0], [18125, 16319], [25446, 24543]],
+                       "points 2 and 3 sit in the range above the dead zone, not at their own bytes")
+
+        let aggressive = curve([0x2B, 0x50, 0x7F, 0xA8, 0xBF, 0xDC])
+        XCTAssertEqual([3598, 9830, 16384, 26000].map { output(aggressive, $0) }, [6694, 14981, 22137, 29712])
+
+        for input in [0, 3598, 9830, 16384, 26000, 32767] {
+            XCTAssertEqual(output(CurvePreset.standard.curve, input), input, "the factory curve is straight")
+        }
+    }
+
+    func testMovingAPointPlacesItWhereItWasDropped() {
+        let deadZone = StickCurve(points: [CurvePoint(x: 28, y: 0), CurvePoint(x: 0x7F, y: 0x7F), CurvePoint(x: 0xBF, y: 0xBF)])
+        let moved = deadZone.moving(point: 1, toPlaced: 0.7, 0.6)
+        XCTAssertEqual(moved.placedPoints[1].x, 0.7, accuracy: 1.0 / 255)
+        XCTAssertEqual(moved.placedPoints[1].y, 0.6, accuracy: 1.0 / 255)
+        XCTAssertEqual(moved.points[0], deadZone.points[0])
+
+        // Point 2 stops short of point 3, and point 3 can't pass point 2.
+        XCTAssertEqual(deadZone.moving(point: 1, toPlaced: 0.95, 0.5).points[1].x, 0xBE)
+        XCTAssertEqual(deadZone.moving(point: 2, toPlaced: 0.2, 0.5).points[2].x, 0x80)
+        // Point 1 moves on its own; the others follow it because they're stored relative to it.
+        let raised = deadZone.moving(point: 0, toPlaced: 0.2, 0)
+        XCTAssertEqual(raised.points[0], CurvePoint(x: 51, y: 0))
+        XCTAssertGreaterThan(raised.placedPoints[1].x, deadZone.placedPoints[1].x)
+    }
+
     func testPresetsUseAccessoriesNamesAndKeepRawValues() throws {
         XCTAssertEqual(CurvePreset.allCases.map(\.label), ["Default", "Slow start", "Fast start", "Instant", "Smooth"])
         let decoded = try JSONDecoder().decode([CurvePreset].self, from: Data(#"["standard", "aggressive", "delay"]"#.utf8))

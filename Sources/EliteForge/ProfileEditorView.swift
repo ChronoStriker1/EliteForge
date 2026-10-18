@@ -503,18 +503,22 @@ struct CurveEditor: View {
                         .overlay(Circle().stroke(Color.xbox, lineWidth: 3))
                         .shadow(color: .black.opacity(0.4), radius: 3)
                         .frame(width: 18, height: 18)
-                        .position(position(curve.points[index], in: size))
-                        .gesture(DragGesture().onChanged { value in drag(index, to: value.location, in: size) })
+                        .position(position(curve.placedPoints[index], in: size))
+                        .gesture(DragGesture().onChanged { value in
+                            onChange(curve.moving(point: index, toPlaced: value.location.x / size.width, 1 - value.location.y / size.height))
+                        })
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
     }
 
+    /// Drawn through the points where the controller places them, so the
+    /// line and the live dot agree with what a game gets.
     private func curveLine(in size: CGSize) -> Path {
         Path { path in
             path.move(to: CGPoint(x: 0, y: size.height))
-            for point in curve.points { path.addLine(to: position(point, in: size)) }
+            for point in curve.placedPoints { path.addLine(to: position(point, in: size)) }
             path.addLine(to: CGPoint(x: size.width, y: 0))
         }
     }
@@ -526,20 +530,8 @@ struct CurveEditor: View {
         return path
     }
 
-    private func position(_ point: CurvePoint, in size: CGSize) -> CGPoint {
-        CGPoint(x: size.width * CGFloat(point.x) / 255, y: size.height * (1 - CGFloat(point.y) / 255))
-    }
-
-    private func drag(_ index: Int, to location: CGPoint, in size: CGSize) {
-        var points = curve.points
-        let lower = index > 0 ? Int(points[index - 1].x) + 1 : 1
-        let upper = index < points.count - 1 ? Int(points[index + 1].x) - 1 : 254
-        // Points read from a controller or file may not be in order; don't move one that has no room.
-        guard lower <= upper, (0...255).contains(lower), (0...255).contains(upper) else { return }
-        let x = Int((location.x / size.width * 255).rounded())
-        let y = Int(((1 - location.y / size.height) * 255).rounded())
-        points[index] = CurvePoint(x: UInt8(min(max(x, lower), upper)), y: UInt8(min(max(y, 0), 255)))
-        onChange(StickCurve(points: points))
+    private func position(_ point: (x: Double, y: Double), in size: CGSize) -> CGPoint {
+        CGPoint(x: size.width * point.x, y: size.height * (1 - point.y))
     }
 }
 

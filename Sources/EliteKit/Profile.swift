@@ -68,17 +68,58 @@ public struct StickCurve: Hashable, Codable, Sendable {
 
     var bytes: [UInt8] { points.flatMap { [$0.x, $0.y] } }
 
-    /// Output (0-1) for an input deflection (0-1), by linear interpolation through the points.
+    /// Output (0-1) for an input deflection (0-1), worked out the way the
+    /// firmware does it, in 15-bit integers: straight lines through (0, 0),
+    /// the three placed points and (32767, 32767).
     public func output(for input: Double) -> Double {
-        let knots = [(0.0, 0.0)] + points.map { (Double($0.x) / 255, Double($0.y) / 255) } + [(1.0, 1.0)]
-        let x = max(0, min(1, input))
-        for index in 1..<knots.count where x <= knots[index].0 {
-            let (x0, y0) = knots[index - 1]
-            let (x1, y1) = knots[index]
-            if x1 - x0 < 0.0001 { return y1 }
-            return y0 + (y1 - y0) * (x - x0) / (x1 - x0)
+        let deflection = Int((max(0, min(1, input)) * 32767).rounded())
+        let knots = [(x: 0, y: 0)] + firmwarePoints + [(x: 32767, y: 32767)]
+        // The same segment choice as firmware 0x10050612: the first point
+        // the input is still left of ends the segment.
+        let end = (1...3).first { deflection < knots[$0].x } ?? 4
+        let (from, to) = (knots[end - 1], knots[end])
+        return Double(Self.firmwareMap(deflection, from: from.x, to.x, onto: from.y, to.y)) / 32767
+    }
+
+    /// Where the firmware puts the three points, as fractions of full
+    /// deflection. Points 2 and 3 are stored as fractions of the range above
+    /// point 1, so they only sit where their bytes say when point 1 is at (0, 0).
+    public var placedPoints: [(x: Double, y: Double)] {
+        firmwarePoints.map { (Double($0.x) / 32767, Double($0.y) / 32767) }
+    }
+
+    /// The curve with one point moved so the firmware places it at `x`, `y`
+    /// (fractions of full deflection). Points 2 and 3 stay in order.
+    public func moving(point index: Int, toPlaced x: Double, _ y: Double) -> StickCurve {
+        func byte(_ fraction: Double) -> Int { Int((max(0, min(1, fraction)) * 255).rounded()) }
+        /// The stored fraction that the firmware places at `placed` above `base`.
+        func relative(_ placed: Double, above base: Double) -> Double { base < 1 ? (placed - base) / (1 - base) : 0 }
+        var points = self.points
+        let first = placedPoints[0]
+        let (storedX, storedY) = index == 0 ? (x, y) : (relative(x, above: first.x), relative(y, above: first.y))
+        let lower = index == 2 ? Int(points[1].x) + 1 : 1
+        let upper = index == 1 ? Int(points[2].x) - 1 : 254
+        guard lower <= upper else { return self }
+        points[index] = CurvePoint(x: UInt8(min(max(byte(storedX), lower), upper)), y: UInt8(byte(storedY)))
+        return StickCurve(points: points)
+    }
+
+    /// The points as the firmware uses them (0x10050612): each byte scaled to
+    /// 15 bits (0x10050608), then points 2 and 3 mapped into the range above point 1.
+    private var firmwarePoints: [(x: Int, y: Int)] {
+        func scale(_ byte: UInt8) -> Int { Int(byte) * 128 + Int(byte) / 2 }
+        let x1 = scale(points[0].x), y1 = scale(points[0].y)
+        return [(x1, y1)] + points.dropFirst().map {
+            (Self.firmwareMap(scale($0.x), from: 0, 32767, onto: x1, 32767), Self.firmwareMap(scale($0.y), from: 0, 32767, onto: y1, 32767))
         }
-        return 1
+    }
+
+    /// The firmware's clamped linear map (0x1004e0ca), with its integer
+    /// division that rounds toward zero.
+    private static func firmwareMap(_ value: Int, from low: Int, _ high: Int, onto outLow: Int, _ outHigh: Int) -> Int {
+        if value >= high { return outHigh }
+        if value <= low { return outLow }
+        return outLow + (value - low) * (outHigh - outLow) / (high - low)
     }
 
     public var preset: CurvePreset? { CurvePreset.allCases.first { $0.curve == self } }
