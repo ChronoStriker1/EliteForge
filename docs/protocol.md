@@ -119,7 +119,7 @@ The Accessories app saves a slot in this order (verified working):
 | 2 | 0x22 | 0x23 | 0x28 | 0x29 |
 | 3 | 0x24 | 0x25 | 0x2A | 0x2B |
 
-Byte 0 of every page is the format version, major in the high nibble and minor in the low: 0x10 is version 1.0 and 0x11 is version 1.1 (app code 0x180c27e04, firmware slot templates). The app writes 0x11 when the controller firmware is 5.21.3242.0 or newer and 0x10 below that (app code 0x180c21b78 compares the firmware with 5.21.3242.0). It decides by firmware, not by the page it read, so any save on current firmware writes 0x11 to all four pages. The 5.11.3113.0 firmware image's templates start with 0x10 and the 5.22.16.0 image's with 0x11. A 1.0 curves page is 28 bytes, a 1.1 curves page is 43 bytes (app code 0x180e9fc08 allocates 0x1c or 0x2b); the curves deserializer derives the version from the size it gets back. Everything below bytes 28 and 52 in the two pages exists only in version 1.1.
+Byte 0 of every page is the format version, major in the high nibble and minor in the low: 0x10 is version 1.0 and 0x11 is version 1.1 (app code 0x180c27e04, firmware slot templates). The app writes 0x11 when the controller firmware is 5.21.3242.0 or newer and 0x10 below that (app code 0x180c21b78 compares the firmware with 5.21.3242.0). It decides by firmware, not by the page it read, so any save on current firmware writes 0x11 to all four pages. The 5.11.3113.0 firmware image's templates start with 0x10 and the 5.22.16.0 image's with 0x11. A 1.0 curves page is 28 bytes, a 1.1 curves page is 43 bytes (app code 0x180e9fc08 allocates 0x1c or 0x2b); the curves deserializer derives the version from the size it gets back. The mapping page is 56 bytes in both versions. The app's version gate covers only curves bytes 28-42 (sticky inputs and the Adaptive Controller's extra inputs) and the Adaptive mouse flags in mapping byte 52 bits 1-5; swap triggers (byte 52 bit 0) and the keyboard flags in bytes 52-55 are written in both versions.
 
 ### Mapping page (56 bytes)
 
@@ -162,7 +162,7 @@ Layout:
 
 The Accessories default for paddles is P1 B, P2 Y, P3 A, P4 X (`05 07 04 06`).
 
-The firmware stores each byte of the trigger pairs as a 10-bit value, `b * 4 + (b >> 6)`, and the app stores its 0-1023 values as `v >> 2` (app code 0x180e991f4). If max is not above min the firmware moves max to min + 1, so the (0, 0) pair the app writes for the short lock position makes that position an on/off switch. If the app finds max below min it writes 0xFF, 0x00 instead. The Windows "triggers 67%" capture, which set bytes 32, 34, 38 and 40 to 0xAB and left 33, 35, 39 and 41 at 0, is max 67% with min 0 written to the full and half positions of both triggers, which is exactly what the app's serializer does. Upstream's reading of bytes 34-35 and 40-41 as stick saturation does not match either the app or the firmware.
+The firmware stores each byte of the trigger pairs as a 10-bit value, `b * 4 + (b >> 6)`, and the app stores its 0-1023 values as `v >> 2` (app code 0x180e991f4). If max is not above min the firmware repairs the pair (firmware 0x1005078c): when min is below 1023 it raises max to min + 1; when min is 1023 and max is 0 it resets the pair to max 1023, min 0; otherwise it lowers min to max - 1. So the (0, 0) pair the app writes for the short lock position makes that position an on/off switch. If the app finds max below min it writes 0xFF, 0x00 instead. The Windows "triggers 67%" capture, which set bytes 32, 34, 38 and 40 to 0xAB and left 33, 35, 39 and 41 at 0, is max 67% with min 0 written to the full and half positions of both triggers, which is exactly what the app's serializer does. Upstream's reading of bytes 34-35 and 40-41 as stick saturation does not match either the app or the firmware.
 
 A Shift button is code 0x01 in **both** the normal and shift mapping pages. Upstream's description, which removes the button from the 9-16 array, doesn't match the captures.
 
@@ -186,7 +186,7 @@ Swap sticks lives in the curves page: byte 27 bit 2 swaps the X axes and bit 3 s
 | 1-24 | LX, LY, RX, RY curves, six bytes each: three (x, y) points, 0-255. Linear is `2b 2b 7f 7f bf bf`. The app always writes point 1 as (0x2b, 0x2b) and takes points 2 and 3 from the user's two handles. | capture, app code 0x180e9fc08 |
 | 25-26 | one byte per stick that the firmware's own setting path calls rotation; the app writes 0 for the Elite 2 | firmware 0x1004f5dc, inferred |
 | 27 | bit 0 inverts left Y, bit 1 inverts right Y, bit 2 swaps the X axes, bit 3 swaps the Y axes, bits 4-5 left stick mode, bits 6-7 right stick mode | capture, app code 0x180e9fc08, firmware 0x10050594 and 0x1005074e |
-| 28-30 | sticky (toggle) inputs, one bit per input in mapping byte order: byte 28 bits 0-7 are P1, P2, P3, P4, A, B, X, Y; byte 29 bits 0-7 are D-pad up, down, left, right, LB, RB, LS, RS; byte 30 bits 0-1 are LT, RT. A set bit makes the input toggle its output. Written only in version 1.1. | app code 0x180e9fc08, firmware 0x1004f5dc and 0x1004fe34 |
+| 28-30 | sticky (toggle) inputs, one bit per input in mapping byte order: byte 28 bits 0-7 are P1, P2, P3, P4, A, B, X, Y; byte 29 bits 0-7 are D-pad up, down, left, right, LB, RB, LS, RS; byte 30 bits 0-1 are LT, RT. A set bit makes the input toggle its output. The app serializes all 18 bits, but the firmware applies the toggle only to the 16 inputs of mapping bytes 1-16: its toggle loop stops at 16 (0x1004fe34, the only caller of the toggle helper 0x10050b34) and the trigger bits of the input mask come straight from the range processing (0x1004e89e). The LT and RT bits are therefore written but not acted on by the firmware path traced. Written only in version 1.1. | app code 0x180e9fc08, firmware 0x1004f5dc, 0x1004fe34, 0x1004e89e |
 | 31-38 | output codes of the Adaptive Controller's eight extra inputs, 0 on the Elite 2 | app code 0x180c25984 |
 | 39-42 | modifier nibbles for those extra inputs, 0 on the Elite 2 | firmware 0x1004ec42 |
 
@@ -196,15 +196,17 @@ When the Accessories app inverted the right stick, it changed only the normal-la
 
 How the firmware applies a curve (firmware 0x10050612): each byte becomes a 15-bit value, `b * 128 + b / 2`. Points 2 and 3 are then placed relative to point 1, `x2' = x1 + x2 * (32767 - x1) / 32767` and the same for y and for point 3, and the output is piecewise linear through (0, 0), point 1, point 2', point 3' and (32767, 32767). So the second and third points are fractions of the range above the first point, not absolute positions. A dead zone encoded as a first point (x, 0) still works, but it compresses the rest of the curve into the remaining range.
 
-Preset shapes. The app's presets are constants in `Devices.App.dll` (static constructor 0x180a44178, written through 0x180e9fad4 as `v * 2 >> 8`). The default reproduces the captured page exactly; the other four are derived from the constants and the metadata's field order (Delayed, Aggressive, Instant, Smooth, which the UI calls Slow start, Fast start, Instant, Smooth) and have not been captured:
+Preset shapes. The app does not write its preset constants directly. Before writing a curves page the constructor calls a normaliser with mode 1 (app code 0x180e9fdec calls 0x180c27e4c, then 0x180c27f04). It rebuilds the two model points as a legacy point set whose id is `1000 * (x1 % 10) + (x2 % 10)` (0x180bf8c90 with the constants at 0x1807fecc0 and 0x1807fec20), maps the id-tagged preset constants onto the legacy preset constants (0x180c283ec) and looks the id up in a 41-entry table (0x180c28980: one default plus four presets with ten intensity steps each, 0x180c280fc and 0x180c28148). The table pairs each legacy point set with the new-format points that go on the wire, written as `v * 2 >> 8` (0x180e9fad4). A miss falls back to the new default (0x3fff, 0x3fff, 0x5fbf, 0x5fbf), which is how the Default preset produces the captured page. The names come from the metadata's field order (Delayed, Aggressive, Instant, Smooth, which the UI calls Slow start, Fast start, Instant, Smooth) and are inferred; the bytes are the intensity 4 entries that the preset constants select. Only Default has been captured:
 
 | Preset | Bytes 1-6 of each axis |
 |---|---|
 | Default | `2b 2b 7f 7f bf bf` |
-| Slow start | `2b 2b 40 40 da 94` |
-| Fast start | `2b 2b 40 40 8c cb` |
-| Instant | `2b 2b 40 40 40 68` |
-| Smooth | `2b 2b 8b 8b d9 9c` |
+| Slow start | `2b 2b 3f 3f da 8d` |
+| Fast start | `2b 2b 3f 3f 8c c5` |
+| Instant | `2b 2b 3f 3f 3f 68` |
+| Smooth | `2b 2b 8c 8c d8 9c` |
+
+Each preset has ten intensity steps in the table; the app's curve slider moves between them, so the Elite 2 pages the app writes only ever hold one of the 41 table entries.
 
 ## Input
 
