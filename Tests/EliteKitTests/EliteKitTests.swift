@@ -312,14 +312,14 @@ final class CodecTests: XCTestCase {
         XCTAssertEqual(stick.curve.points[0], CurvePoint(x: 38, y: 0))
         XCTAssertEqual(stick.curve.output(for: 0.1), 0, accuracy: 0.001)
         XCTAssertGreaterThan(stick.curve.output(for: 0.5), 0.3)
-        // A large dead zone pushes the second point along so the points stay ordered.
+        // Points 2 and 3 keep their bytes; the firmware fits them in after the dead zone.
         stick.deadZone = 255
         XCTAssertEqual(stick.deadZone, StickSettings.maxDeadZone)
-        XCTAssertLessThan(stick.curve.points[0].x, stick.curve.points[1].x)
-        XCTAssertLessThan(stick.curve.points[1].x, stick.curve.points[2].x)
+        XCTAssertEqual(Array(stick.curve.points[1...]), Array(CurvePreset.standard.curve.points[1...]))
+        XCTAssertGreaterThan(stick.curve.placedPoints[1].x, stick.curve.placedPoints[0].x)
         stick.deadZone = 0
         XCTAssertEqual(stick.deadZone, 0)
-        XCTAssertGreaterThan(stick.curve.points[0].y, 0)
+        XCTAssertEqual(stick.curve, CurvePreset.standard.curve)
 
         // The dead zone survives a preset change, and the preset survives
         // dead zone changes.
@@ -333,11 +333,10 @@ final class CodecTests: XCTestCase {
         tuned.deadZone = 0
         XCTAssertEqual(tuned.curve, CurvePreset.instant.curve)
 
-        // Out-of-order points from a file don't crash, and come out ordered.
+        // Out-of-order points from a file don't crash; the dead zone only moves point 1.
         var imported = StickSettings(curve: StickCurve(points: [CurvePoint(x: 43, y: 43), CurvePoint(x: 255, y: 200), CurvePoint(x: 191, y: 191)]))
         imported.deadZone = 30
-        XCTAssertLessThan(imported.curve.points[0].x, imported.curve.points[1].x)
-        XCTAssertLessThan(imported.curve.points[1].x, imported.curve.points[2].x)
+        XCTAssertEqual(imported.curve.points, [CurvePoint(x: 30, y: 0), CurvePoint(x: 255, y: 200), CurvePoint(x: 191, y: 191)])
 
         // It reaches the curves page for both axes of the stick.
         var profile = try ProfileCodec.decode(.factoryDefault, name: "x")
@@ -423,8 +422,41 @@ final class CodecTests: XCTestCase {
         let linear = CurvePreset.standard.curve
         XCTAssertEqual(linear.output(for: 0.5), 0.5, accuracy: 0.01)
         XCTAssertEqual(linear.output(for: 1.0), 1.0, accuracy: 0.001)
-        XCTAssertGreaterThan(CurvePreset.aggressive.curve.output(for: 0.3), 0.3)
-        XCTAssertLessThan(CurvePreset.delay.curve.output(for: 0.3), 0.3)
+        XCTAssertGreaterThan(CurvePreset.aggressive.curve.output(for: 0.6), 0.6)
+        XCTAssertLessThan(CurvePreset.delay.curve.output(for: 0.6), 0.6)
+    }
+
+    func testPresetsWriteTheAccessoriesBytes() throws {
+        let expected: [CurvePreset: String] = [
+            .standard: "2b 2b 7f 7f bf bf", .delay: "2b 2b 3f 3f da 8d", .aggressive: "2b 2b 3f 3f 8c c5",
+            .instant: "2b 2b 3f 3f 3f 68", .smooth: "2b 2b 8c 8c d8 9c",
+        ]
+        for (preset, hex) in expected {
+            let axis = Captured.page(hex)
+            var profile = try ProfileCodec.decode(.factoryDefault, name: "x")
+            profile.leftStick.apply(preset)
+            profile.rightStick.apply(preset)
+            let pages = ProfileCodec.encode(profile)
+            for curves in [pages.normalCurves, pages.shiftCurves] {
+                XCTAssertEqual(Array(curves[1..<25]), axis + axis + axis + axis, preset.label)
+            }
+            let decoded = try ProfileCodec.decode(pages, name: "x")
+            XCTAssertEqual([decoded.leftStick.preset, decoded.rightStick.preset], [preset, preset])
+
+            // A dead zone replaces point 1 only, and the preset still shows.
+            profile.leftStick.deadZone = 28
+            let zoned = ProfileCodec.encode(profile)
+            XCTAssertEqual(Array(zoned.normalCurves[1..<13]), [28, 0] + axis[2...] + [28, 0] + axis[2...], preset.label)
+            XCTAssertEqual(try ProfileCodec.decode(zoned, name: "x").leftStick.preset, preset)
+        }
+    }
+
+    func testCurvesFromTheOldApproximatePresetsLoadAsCustom() throws {
+        // What earlier builds wrote for Fast start, with an 11% dead zone.
+        let json = Data(#"{"curve":{"points":[{"x":28,"y":0},{"x":127,"y":168},{"x":191,"y":220}]},"invertY":false}"#.utf8)
+        let stick = try JSONDecoder().decode(StickSettings.self, from: json)
+        XCTAssertNil(stick.preset)
+        XCTAssertEqual(stick.deadZone, 28)
     }
 
     func testCurveOutputFollowsTheFirmware() {

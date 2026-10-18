@@ -126,9 +126,10 @@ public struct StickCurve: Hashable, Codable, Sendable {
 }
 
 /// Named response curves, in the Accessories app's order. `.standard` is the
-/// controller's factory curve and matches what the Accessories app writes.
-/// The other shapes follow the Accessories presets shown in `label`, but
-/// their exact point values have not been captured from the Windows app yet.
+/// controller's factory curve and matches a captured page. The other four
+/// are the table entries the Accessories app writes for its presets
+/// (Devices.App.dll 0x180c28980), not yet captured; which name goes with
+/// which entry is inferred from the order of the app's preset constants.
 /// The case names predate the Accessories labels; they stay as the raw values.
 public enum CurvePreset: String, CaseIterable, Codable, Sendable, Identifiable {
     case standard, delay, aggressive, instant, smooth
@@ -151,10 +152,10 @@ public enum CurvePreset: String, CaseIterable, Codable, Sendable, Identifiable {
         }
         switch self {
         case .standard: return c([0x2B, 0x2B, 0x7F, 0x7F, 0xBF, 0xBF])
-        case .aggressive: return c([0x2B, 0x50, 0x7F, 0xA8, 0xBF, 0xDC])
-        case .instant: return c([0x10, 0x60, 0x40, 0xC0, 0x80, 0xF0])
-        case .delay: return c([0x2B, 0x10, 0x7F, 0x50, 0xBF, 0xA0])
-        case .smooth: return c([0x40, 0x20, 0x7F, 0x7F, 0xBF, 0xDF])
+        case .delay: return c([0x2B, 0x2B, 0x3F, 0x3F, 0xDA, 0x8D])
+        case .aggressive: return c([0x2B, 0x2B, 0x3F, 0x3F, 0x8C, 0xC5])
+        case .instant: return c([0x2B, 0x2B, 0x3F, 0x3F, 0x3F, 0x68])
+        case .smooth: return c([0x2B, 0x2B, 0x8C, 0x8C, 0xD8, 0x9C])
         }
     }
 }
@@ -203,26 +204,17 @@ public struct StickSettings: Hashable, Codable, Sendable {
     }
 
     /// `curve` with its first point moved to make a dead zone of `zone`.
+    /// Points 2 and 3 keep their bytes: the firmware places them in the
+    /// travel past point 1, so the rest of the curve fits after the dead zone.
     static func curve(_ curve: StickCurve, deadZone zone: UInt8) -> StickCurve {
         var points = curve.points
         let zone = min(zone, maxDeadZone)
-        if zone == 0 {
-            // Back to a normal first point, halfway to the second. A curve
-            // that has no dead zone stays as it is.
-            guard points[0].y == 0 else { return curve }
-            points[0] = CurvePoint(x: max(1, points[1].x / 2), y: max(1, points[1].y / 2))
-        } else {
-            // Keep the points in order along the stick's travel. Work in Int:
-            // curves from files or the controller can be out of order or end at 255.
-            let x0 = Int(zone)
-            var x1 = Int(points[1].x)
-            var x2 = Int(points[2].x)
-            if x1 <= x0 { x1 = max((x0 + x2) / 2, x0 + 1) }
-            x1 = min(x1, 253)
-            x2 = min(max(x2, x1 + 1), 254)
+        if zone > 0 {
             points[0] = CurvePoint(x: zone, y: 0)
-            points[1] = CurvePoint(x: UInt8(x1), y: max(points[1].y, 1))
-            points[2] = CurvePoint(x: UInt8(x2), y: points[2].y)
+        } else if points[0].y == 0 {
+            // Back to the first point the Accessories app always writes. A
+            // curve that has no dead zone stays as it is.
+            points[0] = CurvePreset.standard.curve.points[0]
         }
         return StickCurve(points: points)
     }
