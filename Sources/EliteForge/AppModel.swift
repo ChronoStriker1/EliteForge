@@ -646,18 +646,15 @@ final class AppModel {
         }
     }
 
-    /// Bumped by every rumble, so only the latest one turns the motors off.
-    private var rumbleGeneration = 0
+    private let rumbles = RumbleSequencer()
 
-    /// Every rumble goes through here. One started meanwhile takes over the
-    /// motors, and this one's stop is skipped so it can't cut that one short.
+    /// Every rumble goes through here, so overlapping ones don't stop each other early.
     private func playRumble(leftGrip: UInt8, rightGrip: UInt8, leftTrigger: UInt8, rightTrigger: UInt8, for duration: Duration) async throws {
-        rumbleGeneration += 1
-        let generation = rumbleGeneration
-        _ = try await helper.perform(.rumble(leftGrip: leftGrip, rightGrip: rightGrip, leftTrigger: leftTrigger, rightTrigger: rightTrigger))
-        try await Task.sleep(for: duration)
-        guard generation == rumbleGeneration else { return }
-        _ = try await helper.perform(.rumble(leftGrip: 0, rightGrip: 0, leftTrigger: 0, rightTrigger: 0))
+        try await rumbles.play(for: duration) {
+            _ = try await helper.perform(.rumble(leftGrip: leftGrip, rightGrip: rightGrip, leftTrigger: leftTrigger, rightTrigger: rightTrigger))
+        } stop: {
+            _ = try await helper.perform(.rumble(leftGrip: 0, rightGrip: 0, leftTrigger: 0, rightTrigger: 0))
+        }
     }
 
     /// Identifies the controller in hand, like the Accessories app's buzz.

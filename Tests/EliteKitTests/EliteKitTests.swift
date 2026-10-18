@@ -748,3 +748,40 @@ final class QuickRemapTests: XCTestCase {
         XCTAssertEqual(detector.update(input([.a]), at: at(4000)), .a)
     }
 }
+
+@MainActor
+final class RumbleSequencerTests: XCTestCase {
+    struct StartFailed: Error {}
+
+    @MainActor final class Motors {
+        var requests: [String] = []
+    }
+
+    func testFailedStartDoesNotKeepTheMotorsRunning() async throws {
+        let sequencer = RumbleSequencer()
+        let motors = Motors()
+        let test = Task {
+            try await sequencer.play(for: .milliseconds(300), start: { motors.requests.append("start test") }, stop: { motors.requests.append("stop") })
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        do {
+            try await sequencer.play(for: .milliseconds(400), start: { throw StartFailed() }, stop: { motors.requests.append("stop buzz") })
+            XCTFail("the start error reaches the caller")
+        } catch is StartFailed {}
+        try await test.value
+        XCTAssertEqual(motors.requests, ["start test", "stop"])
+    }
+
+    func testOnlyTheNewestRumbleStopsTheMotors() async throws {
+        // A motor test, then Buzz before it ends: the test's stop would cut Buzz short.
+        let sequencer = RumbleSequencer()
+        let motors = Motors()
+        let test = Task {
+            try await sequencer.play(for: .milliseconds(300), start: { motors.requests.append("start test") }, stop: { motors.requests.append("stop test") })
+        }
+        try await Task.sleep(for: .milliseconds(100))
+        try await sequencer.play(for: .milliseconds(400), start: { motors.requests.append("start buzz") }, stop: { motors.requests.append("stop buzz") })
+        try await test.value
+        XCTAssertEqual(motors.requests, ["start test", "start buzz", "stop buzz"])
+    }
+}
