@@ -468,25 +468,19 @@ public enum ProfileCodec {
 
     public static func decode(_ pages: SlotPages, name: String, id: UUID = UUID()) throws -> EliteProfile {
         guard pages.isValid else { throw CodecError.badPageSize }
-        let normal = pages.normalMapping
+        let normal = MappingPage(pages.normalMapping)
         let curves = pages.normalCurves
-        let rumble = MappingLayout.rumbleIntensity
-        var light = LightSettings(brightness: normal[MappingLayout.brightness])
-        if normal[MappingLayout.colorFlag] != 0xFF {
-            let c = MappingLayout.color
-            light.color = RGBColor(red: normal[c], green: normal[c + 1], blue: normal[c + 2])
-        }
         let inversion = curves[CurvesLayout.inversion]
         return EliteProfile(
             id: id, name: name,
-            buttons: decodeAssignments(normal),
-            shiftButtons: decodeAssignments(pages.shiftMapping),
+            buttons: normal.assignments,
+            shiftButtons: MappingPage(pages.shiftMapping).assignments,
             leftStick: StickSettings(curve: StickCurve(bytes: curves[1..<7]), invertY: inversion & 0x01 != 0),
             rightStick: StickSettings(curve: StickCurve(bytes: curves[13..<19]), invertY: inversion & 0x02 != 0),
-            leftTrigger: TriggerSettings(range: normal[MappingLayout.leftTriggerRange]),
-            rightTrigger: TriggerSettings(range: normal[MappingLayout.rightTriggerRange]),
-            vibration: VibrationSettings(leftGrip: normal[rumble + 1], rightGrip: normal[rumble], leftTrigger: normal[rumble + 3], rightTrigger: normal[rumble + 2]),
-            light: light,
+            leftTrigger: TriggerSettings(range: normal.leftTriggerRange),
+            rightTrigger: TriggerSettings(range: normal.rightTriggerRange),
+            vibration: normal.vibration,
+            light: normal.light,
             basePages: pages
         )
     }
@@ -512,86 +506,15 @@ public enum ProfileCodec {
         )
     }
 
-    static func decodeAssignments(_ page: [UInt8]) -> [RemappableControl: Assignment] {
-        var result: [RemappableControl: Assignment] = [:]
-        let keyboard = page[MappingLayout.keyboardFlags] & MappingLayout.keyboardFlagValue != 0
-        for (index, control) in RemappableControl.paddles.enumerated() {
-            let code = page[control.mappingOffset]
-            if code == MappingLayout.defaultPaddleOutputs[index] { continue }
-            result[control] = assignment(forCode: code)
-        }
-        for control in RemappableControl.buttons {
-            let code = page[control.mappingOffset]
-            if code == control.nativeButton!.rawValue { continue }
-            result[control] = assignment(forCode: code)
-        }
-        for control in RemappableControl.triggers {
-            let code = page[control.mappingOffset]
-            if code == 0 { continue }
-            result[control] = keyboard ? .key(KeyboardKey(usage: code)) : assignment(forCode: code)
-        }
-        return result
-    }
-
-    static func assignment(forCode code: UInt8) -> Assignment {
-        switch code {
-        case MappingLayout.codeDisabled: return .disabled
-        case MappingLayout.codeShift: return .shift
-        default:
-            if let button = GamepadButton(rawValue: code) { return .button(button) }
-            return .key(KeyboardKey(usage: code))
-        }
-    }
-
-    static func code(for assignment: Assignment, control: RemappableControl) -> UInt8 {
-        switch assignment {
-        case .standard: return control.standardOutput?.rawValue ?? 0x00
-        case .disabled: return MappingLayout.codeDisabled
-        case .shift: return MappingLayout.codeShift
-        case .button(let button): return button.rawValue
-        case .key(let key): return key.usage
-        }
-    }
-
+    /// The profile-wide settings go into both layers' mapping pages.
     static func encodeMapping(_ base: [UInt8], profile: EliteProfile, assignments: [RemappableControl: Assignment]) -> [UInt8] {
-        var page = base
-        var usesKeyboard = false
-        for control in RemappableControl.allCases {
-            let assignment = assignments[control] ?? .standard
-            if control.isTrigger, case .key = assignment { usesKeyboard = true }
-            page[control.mappingOffset] = code(for: assignment, control: control)
-        }
-        if usesKeyboard {
-            page[MappingLayout.keyboardFlags] |= MappingLayout.keyboardFlagValue
-        } else {
-            page[MappingLayout.keyboardFlags] &= ~MappingLayout.keyboardFlagValue
-        }
-
-        let rumble = MappingLayout.rumbleIntensity
-        page[rumble] = min(profile.vibration.rightGrip, 100)
-        page[rumble + 1] = min(profile.vibration.leftGrip, 100)
-        page[rumble + 2] = min(profile.vibration.rightTrigger, 100)
-        page[rumble + 3] = min(profile.vibration.leftTrigger, 100)
-
-        page[MappingLayout.leftTriggerRange] = profile.leftTrigger.range
-        page[MappingLayout.leftTriggerRange + 1] = 0
-        page[MappingLayout.rightTriggerRange] = profile.rightTrigger.range
-        page[MappingLayout.rightTriggerRange + 1] = 0
-
-        page[MappingLayout.brightness] = min(profile.light.brightness, 100)
-        let c = MappingLayout.color
-        if let color = profile.light.color {
-            page[MappingLayout.colorFlag] = 0x00
-            page[c] = color.red
-            page[c + 1] = color.green
-            page[c + 2] = color.blue
-        } else {
-            page[MappingLayout.colorFlag] = 0xFF
-            page[c] = 0
-            page[c + 1] = 0
-            page[c + 2] = 0
-        }
-        return page
+        var page = MappingPage(base)
+        page.assignments = assignments
+        page.vibration = profile.vibration
+        page.leftTriggerRange = profile.leftTrigger.range
+        page.rightTriggerRange = profile.rightTrigger.range
+        page.light = profile.light
+        return page.bytes
     }
 
     /// Stick settings are stored in both layers' curves pages. The Accessories
