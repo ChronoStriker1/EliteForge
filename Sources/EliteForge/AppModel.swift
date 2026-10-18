@@ -662,3 +662,17 @@ final class AppModel {
         _ = try? await helper.perform(.rumble(leftGrip: 0, rightGrip: 0, leftTrigger: 0, rightTrigger: 0))
     }
 }
+
+#if DEBUG
+extension AppModel {
+    /// For `--snapshots`: runs `body` as if the controller were connected and
+    /// had a Default profile light, then puts back the stored light.
+    func withSnapshotConnection(_ body: () -> Void) {
+        let storedLight = UserDefaults.standard.data(forKey: Self.defaultLightKey)
+        ownsController = true
+        defaultLight = LightSettings(brightness: 80, color: LightColor(red: 0x00, green: 0xD0, blue: 0xFF))
+        body()
+        UserDefaults.standard.set(storedLight, forKey: Self.defaultLightKey)
+    }
+}
+#endif

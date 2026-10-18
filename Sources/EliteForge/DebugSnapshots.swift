@@ -66,7 +66,23 @@ enum DebugSnapshots {
         leftTrigger.addMotion(1023)
         rightTrigger.addMotion(1023)
         render("stick-check", size: CGSize(width: 1180, height: 460), ZStack { CanvasBackground(); StickCheckCard(finished: left, right, leftTrigger, rightTrigger).padding(20) })
-        render("home", size: CGSize(width: 1180, height: 900), ControllerView())
+        render("home", size: CGSize(width: 1180, height: 900), ZStack(alignment: .top) { CanvasBackground(glow: 0.6); ControllerDashboard() })
+
+        var unmapped = profile
+        unmapped.setAssignment(.disabled, for: .a, shift: false)
+        unmapped.setAssignment(.disabled, for: .paddleUpperLeft, shift: false)
+        unmapped.setAssignment(.button(.x), for: .b, shift: false)
+        unmapped.setAssignment(.disabled, for: .paddleUpperRight, shift: false)
+        unmapped.setAssignment(.standard, for: .y, shift: false)
+        model.withSnapshotConnection {
+            model.input.activeSlot = 0
+            model.status.activeSlot = 0
+            render("home-live", size: CGSize(width: 1180, height: 1500), ZStack(alignment: .top) { CanvasBackground(glow: 1.2); ControllerDashboard() })
+            render("mapping-live", size: CGSize(width: 1180, height: 760), ZStack { CanvasBackground(); MappingView(profile: profile, selected: .constant(.a), pickerOpen: .constant(false)) })
+            model.draft = unmapped
+            render("editor-unmapped", size: CGSize(width: 1180, height: 900), ProfileEditorView())
+        }
+        render("assignment-picker", size: CGSize(width: 260, height: 520), ZStack { CanvasBackground(); AssignmentPicker(control: .a, shiftLayer: false, current: .disabled) { _ in } })
         exit(0)
     }
 }

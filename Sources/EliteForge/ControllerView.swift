@@ -4,26 +4,33 @@ import SwiftUI
 /// Home screen: the controller, live, with its details, renaming and a vibration test.
 struct ControllerView: View {
     @Environment(AppModel.self) private var model
+
+    var body: some View {
+        ScrollView { ControllerDashboard() }
+            .background(CanvasBackground(glow: model.isConfiguring ? 1.2 : 0.6))
+    }
+}
+
+/// The home screen without its ScrollView, which `--snapshots` can't draw.
+struct ControllerDashboard: View {
+    @Environment(AppModel.self) private var model
     @State private var editedName = ""
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 18) {
-                hero
-                infoTiles
-                if model.isConfiguring {
-                    HStack(alignment: .top, spacing: 18) {
-                        renameCard
-                        vibrationCard
-                    }
-                    .glassGroup()
-                    DefaultLightCard()
-                    StickCheckCard()
+        VStack(spacing: 18) {
+            hero
+            infoTiles
+            if model.isConfiguring {
+                HStack(alignment: .top, spacing: 18) {
+                    renameCard
+                    vibrationCard
                 }
+                .glassGroup()
+                DefaultLightCard()
+                StickCheckCard()
             }
-            .padding(20)
         }
-        .background(CanvasBackground(glow: model.isConfiguring ? 1.2 : 0.6))
+        .padding(20)
         .navigationTitle(displayName)
         .onAppear { editedName = model.controllerName }
         .onChange(of: model.controllerName) { _, name in editedName = name }
