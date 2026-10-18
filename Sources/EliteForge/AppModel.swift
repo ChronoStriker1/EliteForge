@@ -631,12 +631,24 @@ final class AppModel {
 
     func rumble(leftGrip: UInt8 = 0, rightGrip: UInt8 = 0, leftTrigger: UInt8 = 0, rightTrigger: UInt8 = 0, seconds: Double = 0.8) async {
         do {
-            _ = try await helper.perform(.rumble(leftGrip: leftGrip, rightGrip: rightGrip, leftTrigger: leftTrigger, rightTrigger: rightTrigger))
-            try await Task.sleep(for: .seconds(seconds))
-            _ = try await helper.perform(.rumble(leftGrip: 0, rightGrip: 0, leftTrigger: 0, rightTrigger: 0))
+            try await playRumble(leftGrip: leftGrip, rightGrip: rightGrip, leftTrigger: leftTrigger, rightTrigger: rightTrigger, for: .seconds(seconds))
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// Bumped by every rumble, so only the latest one turns the motors off.
+    private var rumbleGeneration = 0
+
+    /// Every rumble goes through here. One started meanwhile takes over the
+    /// motors, and this one's stop is skipped so it can't cut that one short.
+    private func playRumble(leftGrip: UInt8, rightGrip: UInt8, leftTrigger: UInt8, rightTrigger: UInt8, for duration: Duration) async throws {
+        rumbleGeneration += 1
+        let generation = rumbleGeneration
+        _ = try await helper.perform(.rumble(leftGrip: leftGrip, rightGrip: rightGrip, leftTrigger: leftTrigger, rightTrigger: rightTrigger))
+        try await Task.sleep(for: duration)
+        guard generation == rumbleGeneration else { return }
+        _ = try await helper.perform(.rumble(leftGrip: 0, rightGrip: 0, leftTrigger: 0, rightTrigger: 0))
     }
 
     /// Identifies the controller in hand, like the Accessories app's buzz.
@@ -657,9 +669,7 @@ final class AppModel {
     /// A short buzz on all four motors, the way the Accessories app marks
     /// each finished calibration step (10) and the end (30).
     func calibrationPulse(strength: UInt8) async {
-        _ = try? await helper.perform(.rumble(leftGrip: strength, rightGrip: strength, leftTrigger: strength, rightTrigger: strength))
-        try? await Task.sleep(for: .milliseconds(300))
-        _ = try? await helper.perform(.rumble(leftGrip: 0, rightGrip: 0, leftTrigger: 0, rightTrigger: 0))
+        try? await playRumble(leftGrip: strength, rightGrip: strength, leftTrigger: strength, rightTrigger: strength, for: .milliseconds(300))
     }
 }
 
