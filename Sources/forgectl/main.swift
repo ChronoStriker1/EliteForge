@@ -182,7 +182,17 @@ func describe(_ profile: EliteProfile, pages: SlotPages) -> String {
         let curve = stick.preset.map { $0.label + (stick.deadZone > 0 ? ", dead zone \(stick.deadZonePercent)%" : "") } ?? "Custom " + stick.curve.points.map { "(\($0.x),\($0.y))" }.joined(separator: " ")
         lines.append("\(name): curve \(curve)\(stick.invertY ? ", Y inverted" : "")")
     }
-    lines.append("Trigger range: left \(profile.leftTrigger.rangePercent)%, right \(profile.rightTrigger.rangePercent)%")
+    func range(_ trigger: TriggerSettings) -> String {
+        trigger.deadZone == 0 ? "full at \(trigger.rangePercent)%" : "from \(trigger.deadZonePercent)%, full at \(trigger.rangePercent)%"
+    }
+    lines.append("Trigger range: left \(range(profile.leftTrigger)), right \(range(profile.rightTrigger))")
+    // The app writes one range to the full and half lock positions and (0, 0)
+    // to short; pages written otherwise get their pairs shown.
+    let page = MappingPage(pages.normalMapping)
+    for (name, pairs) in [("left", page.leftTrigger), ("right", page.rightTrigger)] where pairs != TriggerLockPairs(pairs.settings) {
+        let stored = [("full", pairs.full), ("half", pairs.half), ("short", pairs.short)].map { String(format: "%@ %02x %02x", $0, $1.max, $1.min) }
+        lines.append("  \(name) trigger (max, min) per lock position: " + stored.joined(separator: ", "))
+    }
     let v = profile.vibration
     lines.append("Vibration: left grip \(v.leftGrip)%, right grip \(v.rightGrip)%, left trigger \(v.leftTrigger)%, right trigger \(v.rightTrigger)%")
     lines.append("Xbox button: brightness \(profile.light.brightness)%, colour \(profile.light.color?.hex ?? "default")")

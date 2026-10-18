@@ -8,8 +8,8 @@ public struct MappingPage: Hashable, Sendable {
     /// Inputs that don't do their standard job in this layer.
     public var assignments: [RemappableControl: Assignment]
     public var vibration: VibrationSettings
-    public var leftTriggerRange: UInt8
-    public var rightTriggerRange: UInt8
+    public var leftTrigger: TriggerLockPairs
+    public var rightTrigger: TriggerLockPairs
     public var light: LightSettings
     private let base: [UInt8]
 
@@ -26,8 +26,12 @@ public struct MappingPage: Hashable, Sendable {
         self.assignments = assignments
         let rumble = MappingLayout.rumbleIntensity
         vibration = VibrationSettings(leftGrip: bytes[rumble + 1], rightGrip: bytes[rumble], leftTrigger: bytes[rumble + 3], rightTrigger: bytes[rumble + 2])
-        leftTriggerRange = bytes[MappingLayout.leftTriggerRange]
-        rightTriggerRange = bytes[MappingLayout.rightTriggerRange]
+        func pairs(_ offset: Int) -> TriggerLockPairs {
+            func pair(_ index: Int) -> TriggerPair { TriggerPair(max: bytes[offset + index * 2], min: bytes[offset + index * 2 + 1]) }
+            return TriggerLockPairs(full: pair(0), half: pair(1), short: pair(2))
+        }
+        leftTrigger = pairs(MappingLayout.triggerPairs)
+        rightTrigger = pairs(MappingLayout.triggerPairs + 6)
         light = LightSettings(brightness: bytes[MappingLayout.brightness])
         if bytes[MappingLayout.colorFlag] != 0xFF {
             let c = MappingLayout.color
@@ -55,10 +59,9 @@ public struct MappingPage: Hashable, Sendable {
         page[rumble + 2] = min(vibration.rightTrigger, 100)
         page[rumble + 3] = min(vibration.leftTrigger, 100)
 
-        page[MappingLayout.leftTriggerRange] = leftTriggerRange
-        page[MappingLayout.leftTriggerRange + 1] = 0
-        page[MappingLayout.rightTriggerRange] = rightTriggerRange
-        page[MappingLayout.rightTriggerRange + 1] = 0
+        for (pairs, offset) in [(leftTrigger, MappingLayout.triggerPairs), (rightTrigger, MappingLayout.triggerPairs + 6)] {
+            page.replaceSubrange(offset..<offset + 6, with: [pairs.full, pairs.half, pairs.short].flatMap { [$0.max, $0.min] })
+        }
 
         page[MappingLayout.brightness] = min(light.brightness, 100)
         let c = MappingLayout.color
@@ -99,4 +102,39 @@ public struct MappingPage: Hashable, Sendable {
         case .key(let key): return key.usage
         }
     }
+}
+
+/// A trigger's (max, min) bytes for one hair trigger lock position, as stored.
+public struct TriggerPair: Hashable, Sendable {
+    public var max: UInt8
+    public var min: UInt8
+
+    public init(max: UInt8, min: UInt8) {
+        self.max = max
+        self.min = min
+    }
+}
+
+/// One trigger's pairs, which the firmware picks by the hair trigger lock's position.
+public struct TriggerLockPairs: Hashable, Sendable {
+    public var full: TriggerPair
+    public var half: TriggerPair
+    public var short: TriggerPair
+
+    public init(full: TriggerPair, half: TriggerPair, short: TriggerPair) {
+        self.full = full
+        self.half = half
+        self.short = short
+    }
+
+    /// What the Accessories app writes (0x180e9d0b4): the range for the full
+    /// and half positions, and (0, 0) for short, which the firmware turns
+    /// into an on/off switch.
+    public init(_ settings: TriggerSettings) {
+        let pair = TriggerPair(max: settings.range, min: settings.deadZone)
+        self.init(full: pair, half: pair, short: TriggerPair(max: 0, min: 0))
+    }
+
+    /// The range EliteForge edits: the full position's.
+    public var settings: TriggerSettings { TriggerSettings(range: full.max, deadZone: full.min) }
 }

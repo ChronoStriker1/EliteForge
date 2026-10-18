@@ -222,28 +222,64 @@ public struct StickSettings: Hashable, Codable, Sendable {
     public var deadZonePercent: Int { Int((Double(deadZone) / 255 * 100).rounded()) }
 }
 
+/// A trigger's range from the Accessories app, as two points on its travel
+/// (0-255): below `deadZone` the trigger reads zero, and from `range` on it
+/// reads full. The controller turns each byte into a 10-bit position,
+/// `b * 4 + (b >> 6)`. `range` is always past `deadZone`: the firmware
+/// rewrites any other pair (0x1005078c), so EliteForge never writes one.
 public struct TriggerSettings: Hashable, Codable, Sendable {
-    /// Trigger range from the Accessories app: how far the trigger travels
-    /// (0-255) before it reports a full press. 255 uses the whole travel,
-    /// lower values reach full sooner, and 0 makes the trigger on or off.
-    /// Stored as a u16 LE at mapping bytes 32-33 for LT and 38-39 for RT,
-    /// following upstream xbelite2. 67% is 0xAB; the high byte is zero.
-    public var range: UInt8
+    public private(set) var range: UInt8
+    public private(set) var deadZone: UInt8
 
-    public init(range: UInt8 = 0xFF) { self.range = range }
+    /// A pair the firmware wouldn't keep is repaired the way the firmware
+    /// does, so the settings shown are the ones the controller uses.
+    public init(range: UInt8 = 0xFF, deadZone: UInt8 = 0) {
+        if range > deadZone {
+            (self.range, self.deadZone) = (range, deadZone)
+        } else if deadZone < 0xFF {
+            (self.range, self.deadZone) = (deadZone + 1, deadZone)
+        } else if range == 0 {
+            (self.range, self.deadZone) = (0xFF, 0)
+        } else {
+            (self.range, self.deadZone) = (range, range - 1)
+        }
+    }
 
-    public var rangePercent: Int { Int((Double(range) / 255 * 100).rounded()) }
+    private enum CodingKeys: String, CodingKey { case range, deadZone }
 
-    /// The byte for a percentage, rounded the way the Accessories app does (67% = 0xAB).
-    public static func range(percent: Int) -> UInt8 {
+    /// Setups saved before the dead zone have only the range.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(range: try container.decode(UInt8.self, forKey: .range), deadZone: try container.decodeIfPresent(UInt8.self, forKey: .deadZone) ?? 0)
+    }
+
+    /// Moves the full-press point, keeping it past the dead zone.
+    public mutating func setRange(_ value: UInt8) { range = max(value, deadZone + 1) }
+
+    /// Moves the dead zone, keeping it short of the full-press point.
+    public mutating func setDeadZone(_ value: UInt8) { deadZone = min(value, range - 1) }
+
+    public var rangePercent: Int { Self.percent(range) }
+    public var deadZonePercent: Int { Self.percent(deadZone) }
+
+    /// True when the smallest pull past the dead zone reads full.
+    public var isOnOff: Bool { range == deadZone + 1 }
+
+    /// The byte for a percentage of the travel, rounded the way the Accessories app does (67% = 0xAB).
+    public static func position(percent: Int) -> UInt8 {
         UInt8((Double(min(max(percent, 0), 100)) * 255 / 100).rounded())
     }
 
-    /// What a game would read for `pull` (0-1 of the travel).
+    static func percent(_ position: UInt8) -> Int { Int((Double(position) / 255 * 100).rounded()) }
+
+    /// What a game would read for `pull` (0-1 of the travel), from the
+    /// 10-bit pair the way the firmware maps it.
     public func output(forPull pull: Double) -> Double {
-        guard pull > 0 else { return 0 }
-        guard range > 0 else { return 1 }
-        return min(1, pull / (Double(range) / 255))
+        func tenBit(_ byte: UInt8) -> Double { Double(Int(byte) * 4 + Int(byte) >> 6) }
+        let input = pull * 1023
+        if input <= tenBit(deadZone) { return 0 }
+        if input >= tenBit(range) { return 1 }
+        return (input - tenBit(deadZone)) / (tenBit(range) - tenBit(deadZone))
     }
 }
 
@@ -255,24 +291,24 @@ public struct TriggerRangeLink: Equatable, Sendable {
     public private(set) var isOn: Bool
 
     public init(_ profile: EliteProfile) {
-        isOn = profile.leftTrigger.range == profile.rightTrigger.range
+        isOn = profile.leftTrigger == profile.rightTrigger
     }
 
     /// Links the triggers, giving the right one the left one's range.
     public mutating func turnOn(in profile: inout EliteProfile) {
         isOn = true
-        profile.rightTrigger.range = profile.leftTrigger.range
+        profile.rightTrigger = profile.leftTrigger
     }
 
     public mutating func turnOff() { isOn = false }
 
-    /// Sets one trigger's range, and while linked the other's too.
-    public func setRange(_ range: UInt8, of trigger: WritableKeyPath<EliteProfile, TriggerSettings>, in profile: inout EliteProfile) {
+    /// Changes one trigger's range, and while linked the other's to match:
+    /// both ends of it.
+    public func update(_ trigger: WritableKeyPath<EliteProfile, TriggerSettings>, in profile: inout EliteProfile, _ change: (inout TriggerSettings) -> Void) {
+        change(&profile[keyPath: trigger])
         if isOn {
-            profile.leftTrigger.range = range
-            profile.rightTrigger.range = range
-        } else {
-            profile[keyPath: trigger].range = range
+            profile.leftTrigger = profile[keyPath: trigger]
+            profile.rightTrigger = profile[keyPath: trigger]
         }
     }
 }
@@ -477,8 +513,8 @@ public enum ProfileCodec {
             shiftButtons: MappingPage(pages.shiftMapping).assignments,
             leftStick: StickSettings(curve: StickCurve(bytes: curves[1..<7]), invertY: inversion & 0x01 != 0),
             rightStick: StickSettings(curve: StickCurve(bytes: curves[13..<19]), invertY: inversion & 0x02 != 0),
-            leftTrigger: TriggerSettings(range: normal.leftTriggerRange),
-            rightTrigger: TriggerSettings(range: normal.rightTriggerRange),
+            leftTrigger: normal.leftTrigger.settings,
+            rightTrigger: normal.rightTrigger.settings,
             vibration: normal.vibration,
             light: normal.light,
             basePages: pages
@@ -511,8 +547,8 @@ public enum ProfileCodec {
         var page = MappingPage(base)
         page.assignments = assignments
         page.vibration = profile.vibration
-        page.leftTriggerRange = profile.leftTrigger.range
-        page.rightTriggerRange = profile.rightTrigger.range
+        page.leftTrigger = TriggerLockPairs(profile.leftTrigger)
+        page.rightTrigger = TriggerLockPairs(profile.rightTrigger)
         page.light = profile.light
         return page.bytes
     }

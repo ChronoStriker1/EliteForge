@@ -538,8 +538,9 @@ struct CurveEditor: View {
 // MARK: Triggers
 
 /// Trigger range, as in the Accessories app: how far the trigger is pulled
-/// before it reports a full press. The tab also shows the hair trigger
-/// locks, which are physical switches, and the live pull.
+/// before it starts to count and before it reports a full press. The tab
+/// also shows the hair trigger locks, which are physical switches, and the
+/// live pull.
 struct TriggersEditor: View {
     @Environment(AppModel.self) private var model
     let profile: EliteProfile
@@ -559,15 +560,15 @@ struct TriggersEditor: View {
             .tint(.xbox)
             .frame(maxWidth: .infinity, alignment: .leading)
             HStack(alignment: .top, spacing: 18) {
-                triggerCard("Left trigger", short: "LT", settings: profile.leftTrigger, lock: model.input.leftTriggerStop, live: model.input.rawLeftTrigger) { value in
-                    model.updateDraft { link.setRange(value, of: \.leftTrigger, in: &$0) }
+                triggerCard("Left trigger", short: "LT", settings: profile.leftTrigger, lock: model.input.leftTriggerStop, live: model.input.rawLeftTrigger) { change in
+                    model.updateDraft { link.update(\.leftTrigger, in: &$0, change) }
                 }
-                triggerCard("Right trigger", short: "RT", settings: profile.rightTrigger, lock: model.input.rightTriggerStop, live: model.input.rawRightTrigger) { value in
-                    model.updateDraft { link.setRange(value, of: \.rightTrigger, in: &$0) }
+                triggerCard("Right trigger", short: "RT", settings: profile.rightTrigger, lock: model.input.rightTriggerStop, live: model.input.rawRightTrigger) { change in
+                    model.updateDraft { link.update(\.rightTrigger, in: &$0, change) }
                 }
             }
             .glassGroup()
-            Text("Range sets where a pull counts as a full press. At 100% the whole travel is used; lower values reach full sooner, and 0% makes the trigger on or off. The hair trigger locks on the back shorten the travel itself, and the controller scales the shorter travel so a full pull still reads as 100%.")
+            Text("The lower handle is the dead zone: a pull short of it reads 0%. The upper handle is where a pull reads as a full press. With the hair trigger lock on full or half, the controller uses this range; on short, the trigger is on or off, the same as with the Accessories app. The locks shorten the travel itself, and the controller scales the shorter travel so a full pull still reads as 100%.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 640)
@@ -582,26 +583,26 @@ struct TriggersEditor: View {
         model.isConfiguring ? "Press any button on the controller so it reports the switch." : "Connect the controller to read the switch."
     }
 
-    private func triggerCard(_ title: String, short: String, settings: TriggerSettings, lock: TriggerStop?, live: UInt16, update: @escaping (UInt8) -> Void) -> some View {
+    private func triggerCard(_ title: String, short: String, settings: TriggerSettings, lock: TriggerStop?, live: UInt16, update: @escaping ((inout TriggerSettings) -> Void) -> Void) -> some View {
         let pull = Double(min(live, 1023)) / 1023
         return GlassCard(title: title, systemImage: "button.angledtop.vertical.left.fill") {
             HStack(alignment: .bottom, spacing: 24) {
-                TriggerGauge(range: settings.range, live: model.isConfiguring ? live : nil, label: short)
+                TriggerGauge(settings: settings, live: model.isConfiguring ? live : nil, label: short)
                     .frame(width: 70, height: 220)
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .firstTextBaseline) {
                         Text("Range")
                             .font(.subheadline.weight(.semibold))
                         Spacer()
-                        Text(settings.range == 0 ? "On/off" : "\(settings.rangePercent)%")
+                        Text(settings.deadZone == 0 ? "\(settings.rangePercent)%" : "\(settings.deadZonePercent) to \(settings.rangePercent)%")
                             .font(.system(size: 30, weight: .bold, design: .rounded))
                             .monospacedDigit()
                             .contentTransition(.numericText())
                     }
-                    Slider(value: Binding(get: { Double(settings.rangePercent) }, set: { update(TriggerSettings.range(percent: Int($0.rounded()))) }),
-                           in: 0...100)
-                        .tint(.xbox)
-                    Text(settings.range == 0 ? "Any pull is a full press." : "Full press at \(settings.rangePercent)% of the pull.")
+                    RangeSlider(lower: settings.deadZone, upper: settings.range,
+                                setLower: { value in update { $0.setDeadZone(value) } },
+                                setUpper: { value in update { $0.setRange(value) } })
+                    Text(rangeSummary(settings))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     if model.isConfiguring {
@@ -624,6 +625,14 @@ struct TriggersEditor: View {
                 }
             }
         }
+    }
+}
+
+extension TriggersEditor {
+    private func rangeSummary(_ settings: TriggerSettings) -> String {
+        if settings.isOnOff { return "On or off: any pull past \(settings.deadZonePercent)% is a full press." }
+        if settings.deadZone == 0 { return "Full press at \(settings.rangePercent)% of the pull." }
+        return "Starts at \(settings.deadZonePercent)% of the pull and reads full at \(settings.rangePercent)%."
     }
 }
 
@@ -650,17 +659,18 @@ struct TriggerLockIndicator: View {
     }
 }
 
-/// Vertical bar showing the live pull and the point where it counts as a
-/// full press.
+/// Vertical bar showing the live pull, the dead zone at the bottom and the
+/// point where it counts as a full press.
 struct TriggerGauge: View {
-    let range: UInt8
+    let settings: TriggerSettings
     let live: UInt16?
     let label: String
 
     var body: some View {
         GeometryReader { proxy in
             let height = proxy.size.height - 22
-            let rangeHeight = height * CGFloat(range) / 255
+            let rangeHeight = height * CGFloat(settings.range) / 255
+            let deadZoneHeight = height * CGFloat(settings.deadZone) / 255
             VStack(spacing: 6) {
                 ZStack(alignment: .bottom) {
                     RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.black.opacity(0.35))
@@ -670,6 +680,10 @@ struct TriggerGauge: View {
                         .fill(Color.xbox.opacity(0.25))
                         .frame(height: height - rangeHeight)
                         .frame(maxHeight: .infinity, alignment: .top)
+                    // Below the dead zone line, it still reads 0%.
+                    Rectangle()
+                        .fill(Color.black.opacity(0.35))
+                        .frame(height: deadZoneHeight)
                     if let live {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .fill(Color.xboxGlow.gradient)
@@ -680,6 +694,12 @@ struct TriggerGauge: View {
                         .fill(Color.white)
                         .frame(height: 2)
                         .offset(y: -rangeHeight)
+                    if settings.deadZone > 0 {
+                        Rectangle()
+                            .fill(Color.white.opacity(0.6))
+                            .frame(height: 1)
+                            .offset(y: -deadZoneHeight)
+                    }
                 }
                 .frame(height: height)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))

@@ -194,6 +194,18 @@ final class CodecTests: XCTestCase {
         XCTAssertEqual(profile.rightTrigger.rangePercent, 67)
     }
 
+    func testTriggers67PercentIsMaxABMinZeroAtFullAndHalf() throws {
+        let pages = Captured.slot(normal: Captured.triggers67, shift: Captured.triggers67)
+        let profile = try ProfileCodec.decode(pages, name: "x")
+        for trigger in [profile.leftTrigger, profile.rightTrigger] {
+            XCTAssertEqual([trigger.range, trigger.deadZone], [0xAB, 0])
+        }
+        XCTAssertEqual(ProfileCodec.encode(profile, format: .v1_1), pages)
+        let page = MappingPage(Captured.triggers67)
+        XCTAssertEqual(page.leftTrigger, TriggerLockPairs(full: TriggerPair(max: 0xAB, min: 0), half: TriggerPair(max: 0xAB, min: 0), short: TriggerPair(max: 0, min: 0)))
+        XCTAssertEqual(page.rightTrigger, page.leftTrigger)
+    }
+
     func testEditsProduceAccessoriesBytes() throws {
         // Start from default and make the same edits as the Windows captures.
         var profile = try ProfileCodec.decode(.factoryDefault, name: "x")
@@ -206,28 +218,55 @@ final class CodecTests: XCTestCase {
         XCTAssertEqual(ProfileCodec.encode(profile, format: .v1_1).normalCurves, Captured.rightStickInverted)
     }
 
-    func testTriggerEditsPreserveStickRangesAndOtherMappingBytes() throws {
+    func testTriggerRangesFollowTheAccessoriesLayout() throws {
+        // Bytes outside the trigger pairs that the app doesn't model stay as they were.
         var normal = Captured.triggers67
         var shift = Captured.restoredDefault
-        normal[34] = 0x60
-        normal[40] = 0x90
-        shift[34] = 0x70
-        shift[40] = 0xA0
+        normal[49] = 0x22
+        normal[51] = 0x5A
+        shift[51] = 0xA5
         let base = Captured.slot(normal: normal, shift: shift)
         var profile = try ProfileCodec.decode(base, name: "x")
-        profile.leftTrigger.range = 0x80
-        profile.rightTrigger.range = 0x40
+        profile.leftTrigger = TriggerSettings(range: 0x80, deadZone: 0x20)
+        profile.rightTrigger = TriggerSettings(range: 0x40)
         let encoded = ProfileCodec.encode(profile, format: .v1_1)
         for (original, updated) in [(normal, encoded.normalMapping), (shift, encoded.shiftMapping)] {
             var expected = original
-            expected[32] = 0x80
-            expected[33] = 0
-            expected[38] = 0x40
-            expected[39] = 0
+            expected.replaceSubrange(32..<44, with: Captured.page("80 20 80 20 00 00 40 00 40 00 00 00"))
             XCTAssertEqual(updated, expected)
         }
         XCTAssertEqual(encoded.normalCurves, base.normalCurves)
         XCTAssertEqual(encoded.shiftCurves, base.shiftCurves)
+        let decoded = try ProfileCodec.decode(encoded, name: "x")
+        XCTAssertEqual([decoded.leftTrigger.range, decoded.leftTrigger.deadZone, decoded.rightTrigger.range, decoded.rightTrigger.deadZone], [0x80, 0x20, 0x40, 0])
+    }
+
+    func testTriggerPairsTheFirmwareWouldRewriteAreRepairedTheSameWay() throws {
+        // Firmware 0x1005078c: max not above min becomes min + 1 while min is
+        // below full; (0, full) becomes (full, 0); otherwise min drops to max - 1.
+        func pair(_ settings: TriggerSettings) -> [UInt8] { [settings.range, settings.deadZone] }
+        XCTAssertEqual(pair(TriggerSettings(range: 0, deadZone: 0)), [1, 0])
+        XCTAssertEqual(pair(TriggerSettings(range: 0x40, deadZone: 0x80)), [0x81, 0x80])
+        XCTAssertEqual(pair(TriggerSettings(range: 0x80, deadZone: 0x80)), [0x81, 0x80])
+        XCTAssertEqual(pair(TriggerSettings(range: 0, deadZone: 0xFF)), [0xFF, 0])
+        XCTAssertEqual(pair(TriggerSettings(range: 0x10, deadZone: 0xFF)), [0x10, 0x0F])
+        XCTAssertEqual(pair(TriggerSettings(range: 0xAB, deadZone: 0)), [0xAB, 0])
+
+        // Dragging one end past the other stops one step short of it.
+        var trigger = TriggerSettings(range: 0x80, deadZone: 0x20)
+        trigger.setRange(0x10)
+        XCTAssertEqual(pair(trigger), [0x21, 0x20])
+        XCTAssertTrue(trigger.isOnOff)
+        trigger.setRange(0xFF)
+        trigger.setDeadZone(0xFF)
+        XCTAssertEqual(pair(trigger), [0xFF, 0xFE])
+
+        // A page holding a pair the firmware would rewrite is written back repaired, at full and half.
+        var page = Captured.restoredDefault
+        page.replaceSubrange(32..<38, with: Captured.page("00 00 ff 00 80 7f"))
+        let profile = try ProfileCodec.decode(Captured.slot(normal: page), name: "x")
+        XCTAssertEqual(pair(profile.leftTrigger), [1, 0])
+        XCTAssertEqual(Array(ProfileCodec.encode(profile, format: .v1_1).normalMapping[32..<38]), Captured.page("01 00 01 00 00 00"))
     }
 
     func testShiftIsExclusiveAndInBothLayers() {
@@ -269,12 +308,18 @@ final class CodecTests: XCTestCase {
     }
 
     func testTriggerRange() {
-        XCTAssertEqual(TriggerSettings.range(percent: 67), 0xAB)
-        XCTAssertEqual(TriggerSettings.range(percent: 100), 0xFF)
-        let half = TriggerSettings(range: TriggerSettings.range(percent: 50))
+        XCTAssertEqual(TriggerSettings.position(percent: 67), 0xAB)
+        XCTAssertEqual(TriggerSettings.position(percent: 100), 0xFF)
+        let half = TriggerSettings(range: TriggerSettings.position(percent: 50))
         XCTAssertEqual(half.output(forPull: 0.25), 0.5, accuracy: 0.01)
         XCTAssertEqual(half.output(forPull: 0.75), 1)
         XCTAssertEqual(TriggerSettings(range: 0).output(forPull: 0.01), 1)
+
+        // 10-bit positions b * 4 + (b >> 6): 0x40 is 257, 0xC0 is 771.
+        let middle = TriggerSettings(range: 0xC0, deadZone: 0x40)
+        XCTAssertEqual(middle.output(forPull: 257.0 / 1023), 0)
+        XCTAssertEqual(middle.output(forPull: 514.0 / 1023), 0.5, accuracy: 1e-9)
+        XCTAssertEqual(middle.output(forPull: 771.0 / 1023), 1)
     }
 
     func testRejectsCurveWithWrongPointCount() {
@@ -400,15 +445,16 @@ final class CodecTests: XCTestCase {
     }
 
     func testTriggerLinkOnlyChangesWhenToggled() {
+        func percent(_ value: Int) -> UInt8 { TriggerSettings.position(percent: value) }
         var profile = EliteProfile.factoryDefault()
-        profile.leftTrigger.range = TriggerSettings.range(percent: 40)
-        profile.rightTrigger.range = TriggerSettings.range(percent: 60)
+        profile.leftTrigger = TriggerSettings(range: percent(40))
+        profile.rightTrigger = TriggerSettings(range: percent(60))
         var link = TriggerRangeLink(profile)
         XCTAssertFalse(link.isOn)
 
         // Dragging LT through RT's 60% on the way to 80% leaves RT alone.
-        for percent in [50, 60, 70, 80] {
-            link.setRange(TriggerSettings.range(percent: percent), of: \.leftTrigger, in: &profile)
+        for value in [50, 60, 70, 80] {
+            link.update(\.leftTrigger, in: &profile) { $0.setRange(percent(value)) }
         }
         XCTAssertEqual(profile.leftTrigger.rangePercent, 80)
         XCTAssertEqual(profile.rightTrigger.rangePercent, 60)
@@ -416,14 +462,21 @@ final class CodecTests: XCTestCase {
 
         link.turnOn(in: &profile)
         XCTAssertEqual(profile.rightTrigger.rangePercent, 80)
-        link.setRange(TriggerSettings.range(percent: 30), of: \.rightTrigger, in: &profile)
+        link.update(\.rightTrigger, in: &profile) { $0.setRange(percent(30)) }
         XCTAssertEqual([profile.leftTrigger.rangePercent, profile.rightTrigger.rangePercent], [30, 30])
+        // The link covers both ends of the range.
+        link.update(\.leftTrigger, in: &profile) { $0.setDeadZone(percent(10)) }
+        XCTAssertEqual([profile.leftTrigger.deadZonePercent, profile.rightTrigger.deadZonePercent], [10, 10])
 
         link.turnOff()
-        link.setRange(TriggerSettings.range(percent: 90), of: \.rightTrigger, in: &profile)
+        link.update(\.rightTrigger, in: &profile) { $0.setRange(percent(90)) }
+        link.update(\.rightTrigger, in: &profile) { $0.setDeadZone(percent(20)) }
         XCTAssertEqual([profile.leftTrigger.rangePercent, profile.rightTrigger.rangePercent], [30, 90])
+        XCTAssertEqual([profile.leftTrigger.deadZonePercent, profile.rightTrigger.deadZonePercent], [10, 20])
 
         XCTAssertTrue(TriggerRangeLink(EliteProfile.factoryDefault()).isOn, "matching ranges start linked")
+        profile.rightTrigger = TriggerSettings(range: percent(30), deadZone: percent(15))
+        XCTAssertFalse(TriggerRangeLink(profile).isOn, "same full press, different dead zone")
     }
 
     func testUnmappedEssentialButtons() {

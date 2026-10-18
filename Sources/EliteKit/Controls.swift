@@ -217,9 +217,8 @@ public enum MappingLayout {
     public static let codeShift: UInt8 = 0x01
 
     public static let rumbleIntensity = 28 // [weak, strong, right trigger, left trigger], 0-100
-    public static let leftTriggerRange = 32 // low byte of u16 LE
-    public static let rightTriggerRange = 38 // low byte of u16 LE
-    // Stick saturation at 34-35 and 40-41 is preserved from the base page.
+    /// (max, min) pairs per hair trigger lock position (full, half, short): LT 32-37, RT 38-43.
+    public static let triggerPairs = 32
     public static let brightness = 44
     public static let colorFlag = 45 // 0xFF = default white, 0x00 = custom colour
     public static let color = 46 // R, G, B
