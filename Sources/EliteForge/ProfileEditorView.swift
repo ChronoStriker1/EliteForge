@@ -551,33 +551,27 @@ struct CurveEditor: View {
 struct TriggersEditor: View {
     @Environment(AppModel.self) private var model
     let profile: EliteProfile
-    /// The Accessories app's mirror option. Only the ranges are stored, so
-    /// it reads as off whenever they differ.
-    @State private var sameRange = true
+    @State private var link: TriggerRangeLink
 
-    private var linked: Bool { sameRange && profile.leftTrigger.range == profile.rightTrigger.range }
+    init(profile: EliteProfile) {
+        self.profile = profile
+        _link = State(initialValue: TriggerRangeLink(profile))
+    }
 
     var body: some View {
         VStack(spacing: 18) {
-            Toggle("Same range for both triggers", isOn: Binding(get: { linked }, set: { on in
-                sameRange = on
-                if on { model.updateDraft { $0.rightTrigger.range = $0.leftTrigger.range } }
+            Toggle("Same range for both triggers", isOn: Binding(get: { link.isOn }, set: { on in
+                if on { model.updateDraft { link.turnOn(in: &$0) } } else { link.turnOff() }
             }))
             .toggleStyle(.switch)
             .tint(.xbox)
             .frame(maxWidth: .infinity, alignment: .leading)
             HStack(alignment: .top, spacing: 18) {
                 triggerCard("Left trigger", short: "LT", settings: profile.leftTrigger, lock: model.input.leftTriggerStop, live: model.input.rawLeftTrigger) { value in
-                    model.updateDraft {
-                        $0.leftTrigger.range = value
-                        if linked { $0.rightTrigger.range = value }
-                    }
+                    model.updateDraft { link.setRange(value, of: \.leftTrigger, in: &$0) }
                 }
                 triggerCard("Right trigger", short: "RT", settings: profile.rightTrigger, lock: model.input.rightTriggerStop, live: model.input.rawRightTrigger) { value in
-                    model.updateDraft {
-                        $0.rightTrigger.range = value
-                        if linked { $0.leftTrigger.range = value }
-                    }
+                    model.updateDraft { link.setRange(value, of: \.rightTrigger, in: &$0) }
                 }
             }
             .glassGroup()
@@ -586,6 +580,7 @@ struct TriggersEditor: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 640)
         }
+        .onChange(of: profile.id) { link = TriggerRangeLink(profile) }
     }
 
     /// The switch positions come with the 0x0C report, on any profile.

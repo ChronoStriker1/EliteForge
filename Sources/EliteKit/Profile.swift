@@ -214,6 +214,36 @@ public struct TriggerSettings: Hashable, Codable, Sendable {
     }
 }
 
+/// The Accessories app's "same range for both triggers" option. It isn't
+/// stored, only the two ranges are. It starts on when they match, and after
+/// that only `turnOn` and `turnOff` change it, so moving one range past the
+/// other's value doesn't link them.
+public struct TriggerRangeLink: Equatable, Sendable {
+    public private(set) var isOn: Bool
+
+    public init(_ profile: EliteProfile) {
+        isOn = profile.leftTrigger.range == profile.rightTrigger.range
+    }
+
+    /// Links the triggers, giving the right one the left one's range.
+    public mutating func turnOn(in profile: inout EliteProfile) {
+        isOn = true
+        profile.rightTrigger.range = profile.leftTrigger.range
+    }
+
+    public mutating func turnOff() { isOn = false }
+
+    /// Sets one trigger's range, and while linked the other's too.
+    public func setRange(_ range: UInt8, of trigger: WritableKeyPath<EliteProfile, TriggerSettings>, in profile: inout EliteProfile) {
+        if isOn {
+            profile.leftTrigger.range = range
+            profile.rightTrigger.range = range
+        } else {
+            profile[keyPath: trigger].range = range
+        }
+    }
+}
+
 /// Rumble strength per motor, 0-100.
 public struct VibrationSettings: Hashable, Codable, Sendable {
     public var leftGrip: UInt8

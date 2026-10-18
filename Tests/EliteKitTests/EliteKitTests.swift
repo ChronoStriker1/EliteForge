@@ -357,6 +357,33 @@ final class CodecTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(EliteProfile.self, from: data), profile)
     }
 
+    func testTriggerLinkOnlyChangesWhenToggled() {
+        var profile = EliteProfile.factoryDefault()
+        profile.leftTrigger.range = TriggerSettings.range(percent: 40)
+        profile.rightTrigger.range = TriggerSettings.range(percent: 60)
+        var link = TriggerRangeLink(profile)
+        XCTAssertFalse(link.isOn)
+
+        // Dragging LT through RT's 60% on the way to 80% leaves RT alone.
+        for percent in [50, 60, 70, 80] {
+            link.setRange(TriggerSettings.range(percent: percent), of: \.leftTrigger, in: &profile)
+        }
+        XCTAssertEqual(profile.leftTrigger.rangePercent, 80)
+        XCTAssertEqual(profile.rightTrigger.rangePercent, 60)
+        XCTAssertFalse(link.isOn)
+
+        link.turnOn(in: &profile)
+        XCTAssertEqual(profile.rightTrigger.rangePercent, 80)
+        link.setRange(TriggerSettings.range(percent: 30), of: \.rightTrigger, in: &profile)
+        XCTAssertEqual([profile.leftTrigger.rangePercent, profile.rightTrigger.rangePercent], [30, 30])
+
+        link.turnOff()
+        link.setRange(TriggerSettings.range(percent: 90), of: \.rightTrigger, in: &profile)
+        XCTAssertEqual([profile.leftTrigger.rangePercent, profile.rightTrigger.rangePercent], [30, 90])
+
+        XCTAssertTrue(TriggerRangeLink(EliteProfile.factoryDefault()).isOn, "matching ranges start linked")
+    }
+
     func testUnmappedEssentialButtons() {
         var profile = EliteProfile.factoryDefault()
         XCTAssertEqual(profile.unmappedEssentialButtons, [])
