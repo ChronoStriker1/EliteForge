@@ -580,7 +580,7 @@ struct TriggersEditor: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 640)
         }
-        .onChange(of: profile.id) { link = TriggerRangeLink(profile) }
+        .onChange(of: model.draftRevision) { link = TriggerRangeLink(profile) }
     }
 
     /// The switch positions come with the 0x0C report, on any profile.

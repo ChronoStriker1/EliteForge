@@ -44,6 +44,10 @@ final class AppModel {
     var draft: EliteProfile?
     var draftSource: EditorSource?
     var draftIsDirty = false
+    /// Bumped when the draft is replaced rather than edited (switching
+    /// profiles, Revert, a re-read, a reset), so editor state that isn't
+    /// stored in the profile can start over.
+    private(set) var draftRevision = 0
     /// Serial of the controller a slot draft was read from. Saving it to a
     /// different controller is refused, so edits for one can't overwrite another.
     private var draftSerial: String?
@@ -358,6 +362,7 @@ final class AppModel {
             slotsSerial = status.serialNumber
             if draftSource == .slot(slot), !draftIsDirty {
                 draft = profile
+                draftRevision += 1
                 draftSerial = slotsSerial
             }
         }
@@ -379,6 +384,7 @@ final class AppModel {
             draft = nil
             draftSource = nil
         }
+        draftRevision += 1
         draftIsDirty = false
     }
 
@@ -524,6 +530,9 @@ final class AppModel {
             library.slotAssignments[slot] = libraryID
             persistLibrary()
             if draftSource == .slot(slot) {
+                // Saving the draft as it is keeps the editor's state; a reset,
+                // or edits made while the save ran, replace the draft.
+                if draft != profile { draftRevision += 1 }
                 draft = stored
                 draftIsDirty = false
                 draftSerial = target
