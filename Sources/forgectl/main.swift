@@ -160,8 +160,11 @@ func slotArgument(_ args: [String], _ index: Int) -> Int {
     return slot
 }
 
-/// The page format the connected controller's firmware takes.
+/// The page format the connected controller's firmware takes. The helper
+/// learns the firmware from the HELLO it waits for while capturing, so a
+/// helper that has just started knows it only after the attach.
 func controllerFormat(_ backend: Backend) throws -> ProfileFormat {
+    _ = try backend.perform(.attach)
     guard case .status(let status) = try backend.perform(.status) else { return ProfileFormat(firmware: nil) }
     return ProfileFormat(firmware: status.info?.firmware)
 }
