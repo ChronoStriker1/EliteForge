@@ -399,6 +399,10 @@ public struct EliteProfile: Hashable, Codable, Sendable, Identifiable {
     public var buttons: [RemappableControl: Assignment]
     /// Assignments while the shift button is held. Missing entries mean `.standard`.
     public var shiftButtons: [RemappableControl: Assignment]
+    /// Inputs that toggle their output in each layer: press once to hold it,
+    /// again to let go. Only `canBeSticky` controls.
+    public private(set) var stickyButtons: Set<RemappableControl>
+    public private(set) var shiftStickyButtons: Set<RemappableControl>
     public var leftStick: StickSettings
     public var rightStick: StickSettings
     /// Each stick moves as the other, in both layers. The stick clicks stay put.
@@ -415,6 +419,7 @@ public struct EliteProfile: Hashable, Codable, Sendable, Identifiable {
     public init(
         id: UUID = UUID(), name: String, modified: Date = Date(),
         buttons: [RemappableControl: Assignment] = [:], shiftButtons: [RemappableControl: Assignment] = [:],
+        stickyButtons: Set<RemappableControl> = [], shiftStickyButtons: Set<RemappableControl> = [],
         leftStick: StickSettings = StickSettings(), rightStick: StickSettings = StickSettings(), swapSticks: Bool = false,
         leftTrigger: TriggerSettings = TriggerSettings(), rightTrigger: TriggerSettings = TriggerSettings(),
         vibration: VibrationSettings = VibrationSettings(), light: LightSettings = LightSettings(),
@@ -425,6 +430,8 @@ public struct EliteProfile: Hashable, Codable, Sendable, Identifiable {
         self.modified = modified
         self.buttons = buttons
         self.shiftButtons = shiftButtons
+        self.stickyButtons = stickyButtons.filter(\.canBeSticky)
+        self.shiftStickyButtons = shiftStickyButtons.filter(\.canBeSticky)
         self.leftStick = leftStick
         self.rightStick = rightStick
         self.swapSticks = swapSticks
@@ -436,10 +443,10 @@ public struct EliteProfile: Hashable, Codable, Sendable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, modified, buttons, shiftButtons, leftStick, rightStick, swapSticks, leftTrigger, rightTrigger, vibration, light, basePages
+        case id, name, modified, buttons, shiftButtons, stickyButtons, shiftStickyButtons, leftStick, rightStick, swapSticks, leftTrigger, rightTrigger, vibration, light, basePages
     }
 
-    /// Setups saved before swap sticks don't have it.
+    /// Setups saved before sticky inputs and swap sticks don't have them.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
@@ -447,6 +454,8 @@ public struct EliteProfile: Hashable, Codable, Sendable, Identifiable {
         modified = try container.decode(Date.self, forKey: .modified)
         buttons = try container.decode([RemappableControl: Assignment].self, forKey: .buttons)
         shiftButtons = try container.decode([RemappableControl: Assignment].self, forKey: .shiftButtons)
+        stickyButtons = try container.decodeIfPresent(Set<RemappableControl>.self, forKey: .stickyButtons)?.filter(\.canBeSticky) ?? []
+        shiftStickyButtons = try container.decodeIfPresent(Set<RemappableControl>.self, forKey: .shiftStickyButtons)?.filter(\.canBeSticky) ?? []
         leftStick = try container.decode(StickSettings.self, forKey: .leftStick)
         rightStick = try container.decode(StickSettings.self, forKey: .rightStick)
         swapSticks = try container.decodeIfPresent(Bool.self, forKey: .swapSticks) ?? false
@@ -459,6 +468,21 @@ public struct EliteProfile: Hashable, Codable, Sendable, Identifiable {
 
     public func assignment(for control: RemappableControl, shift: Bool) -> Assignment {
         (shift ? shiftButtons : buttons)[control] ?? .standard
+    }
+
+    public func isSticky(_ control: RemappableControl, shift: Bool) -> Bool {
+        (shift ? shiftStickyButtons : stickyButtons).contains(control)
+    }
+
+    /// Makes an input toggle its output in one layer. The triggers can't.
+    public mutating func setSticky(_ sticky: Bool, for control: RemappableControl, shift: Bool) {
+        guard control.canBeSticky else { return }
+        switch (shift, sticky) {
+        case (false, true): stickyButtons.insert(control)
+        case (false, false): stickyButtons.remove(control)
+        case (true, true): shiftStickyButtons.insert(control)
+        case (true, false): shiftStickyButtons.remove(control)
+        }
     }
 
     /// Whether each trigger sends the other in a layer.
@@ -509,7 +533,7 @@ public struct EliteProfile: Hashable, Codable, Sendable, Identifiable {
     /// True when every setting matches a freshly reset slot, which includes
     /// the recommended stick dead zone.
     public var hasDefaultSettings: Bool {
-        buttons.isEmpty && shiftButtons.isEmpty
+        buttons.isEmpty && shiftButtons.isEmpty && stickyButtons.isEmpty && shiftStickyButtons.isEmpty
             && leftStick == .recommended && rightStick == .recommended && !swapSticks
             && leftTrigger == TriggerSettings() && rightTrigger == TriggerSettings()
             && vibration == VibrationSettings() && light == LightSettings()
@@ -562,6 +586,8 @@ public enum ProfileCodec {
             id: id, name: name,
             buttons: normal.assignments,
             shiftButtons: MappingPage(pages.shiftMapping).assignments,
+            stickyButtons: sticky(in: pages.normalCurves),
+            shiftStickyButtons: sticky(in: pages.shiftCurves),
             leftStick: StickSettings(curve: StickCurve(bytes: curves[1..<7]), invertY: stickFlags & 0x01 != 0),
             rightStick: StickSettings(curve: StickCurve(bytes: curves[13..<19]), invertY: stickFlags & 0x02 != 0),
             swapSticks: stickFlags & CurvesLayout.swapSticks == CurvesLayout.swapSticks,
@@ -582,16 +608,30 @@ public enum ProfileCodec {
             page[0] = format.rawValue
             return page
         }
-        // A curves page in the other format is cut short or filled in from the default page.
-        func curves(_ page: [UInt8]) -> [UInt8] {
-            versioned(Array((page + CurvesLayout.defaultPage.dropFirst(page.count)).prefix(format.curvesSize)))
+        // A curves page in the other format is cut short or filled in from
+        // the default page. Only 1.1 has room for sticky inputs.
+        func curves(_ page: [UInt8], sticky: Set<RemappableControl>) -> [UInt8] {
+            var page = Array((page + CurvesLayout.defaultPage.dropFirst(page.count)).prefix(format.curvesSize))
+            if format == .v1_1 {
+                let mask = sticky.reduce(UInt16(0)) { $0 | 1 << ($1.mappingOffset - 1) }
+                page[CurvesLayout.sticky] = UInt8(mask & 0xFF)
+                page[CurvesLayout.sticky + 1] = UInt8(mask >> 8)
+            }
+            return versioned(page)
         }
         return SlotPages(
             normalMapping: versioned(encodeMapping(base.normalMapping, profile: profile, assignments: profile.buttons)),
-            normalCurves: curves(encodeCurves(base.normalCurves, profile: profile)),
+            normalCurves: curves(encodeCurves(base.normalCurves, profile: profile), sticky: profile.stickyButtons),
             shiftMapping: versioned(encodeMapping(base.shiftMapping, profile: profile, assignments: profile.shiftButtons)),
-            shiftCurves: curves(encodeCurves(base.shiftCurves, profile: profile))
+            shiftCurves: curves(encodeCurves(base.shiftCurves, profile: profile), sticky: profile.shiftStickyButtons)
         )
+    }
+
+    /// The sticky inputs a 1.1 curves page holds, leaving out the trigger bits.
+    static func sticky(in page: [UInt8]) -> Set<RemappableControl> {
+        guard page.count == ProfileFormat.v1_1.curvesSize else { return [] }
+        let mask = UInt16(page[CurvesLayout.sticky]) | UInt16(page[CurvesLayout.sticky + 1]) << 8
+        return Set(RemappableControl.allCases.filter { $0.canBeSticky && mask & 1 << ($0.mappingOffset - 1) != 0 })
     }
 
     /// The profile-wide settings go into both layers' mapping pages.

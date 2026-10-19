@@ -36,6 +36,8 @@ enum DebugSnapshots {
         profile.leftTrigger = TriggerSettings(range: 0xAB, deadZone: 0x1A)
         profile.rightTrigger = profile.leftTrigger
         profile.swapSticks = true
+        profile.setSticky(true, for: .paddleUpperRight, shift: false)
+        profile.setSticky(true, for: .x, shift: false)
         model.slots[1] = profile
         model.draft = profile
         model.draftSource = .slot(1)

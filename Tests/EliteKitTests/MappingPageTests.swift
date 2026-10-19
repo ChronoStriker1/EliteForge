@@ -163,4 +163,50 @@ final class MappingPageTests: XCTestCase {
         partial.swapSticks = true
         XCTAssertEqual(ProfileCodec.encode(partial, format: .v1_1).normalCurves[27], 0x0C)
     }
+
+    func testStickyInputsUseCurvesBytes28And29PerLayer() throws {
+        // Bit n - 1 for input byte n: P1 bit 0 and Y bit 7 in byte 28,
+        // D-pad up bit 0 and RS bit 7 in byte 29; B is bit 5 of byte 28.
+        var profile = EliteProfile.factoryDefault()
+        for control in [RemappableControl.paddleUpperRight, .y, .dpadUp, .rightStick] {
+            profile.setSticky(true, for: control, shift: false)
+        }
+        profile.setSticky(true, for: .b, shift: true)
+        profile.setSticky(true, for: .leftTrigger, shift: false)
+        profile.setSticky(true, for: .rightTrigger, shift: true)
+        XCTAssertFalse(profile.isSticky(.leftTrigger, shift: false), "the firmware ignores the trigger bits")
+
+        let pages = ProfileCodec.encode(profile, format: .v1_1)
+        XCTAssertEqual(Array(pages.normalCurves[28...30]), [0x81, 0x81, 0x00])
+        XCTAssertEqual(Array(pages.shiftCurves[28...30]), [0x20, 0x00, 0x00])
+        let decoded = try ProfileCodec.decode(pages, name: "x")
+        XCTAssertEqual(decoded.stickyButtons, [.paddleUpperRight, .y, .dpadUp, .rightStick])
+        XCTAssertEqual(decoded.shiftStickyButtons, [.b])
+        XCTAssertFalse(decoded.hasDefaultSettings)
+    }
+
+    func testStickyKeepsTheTriggerBitsAndTheRestOfByte30() throws {
+        var curves = CurvesLayout.defaultPage
+        curves[30] = 0xFF
+        var profile = try ProfileCodec.decode(SlotPages(normalMapping: Captured.restoredDefault, normalCurves: curves, shiftMapping: Captured.restoredDefault, shiftCurves: curves), name: "x")
+        XCTAssertTrue(profile.stickyButtons.isEmpty)
+        profile.setSticky(true, for: .a, shift: false)
+        var expected = curves
+        expected[28] = 0x10 // A is input byte 5
+        XCTAssertEqual(ProfileCodec.encode(profile, format: .v1_1).normalCurves, expected)
+        XCTAssertEqual(ProfileCodec.encode(profile, format: .v1_1).shiftCurves, curves)
+    }
+
+    func testStickyNeedsFormat1_1() throws {
+        var profile = EliteProfile.factoryDefault()
+        profile.setSticky(true, for: .x, shift: false)
+        let older = ProfileCodec.encode(profile, format: .v1_0)
+        XCTAssertEqual(older.normalCurves.count, 28)
+        XCTAssertTrue(try ProfileCodec.decode(older, name: "x").stickyButtons.isEmpty)
+
+        // A slot read as 1.0 and saved for 1.1 firmware gets the bits once the page has room.
+        var fromOlder = try ProfileCodec.decode(older, name: "x")
+        fromOlder.setSticky(true, for: .x, shift: false)
+        XCTAssertEqual(Array(ProfileCodec.encode(fromOlder, format: .v1_1).normalCurves[28...30]), [0x40, 0, 0])
+    }
 }

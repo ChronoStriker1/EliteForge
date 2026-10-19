@@ -442,6 +442,8 @@ final class CodecTests: XCTestCase {
         profile.setAssignment(.key(KeyCombination(KeyboardKey(usage: 0x09), modifiers: [.control, .alt])), for: .b, shift: false)
         profile.setAssignment(.button(.rightTrigger), for: .x, shift: false)
         profile.setAssignment(.code(0x12), for: .y, shift: true)
+        profile.setSticky(true, for: .paddleLowerRight, shift: true)
+        profile.swapSticks = true
         profile.light.color = RGBColor(red: 1, green: 2, blue: 3)
         let data = try JSONEncoder().encode(profile)
         XCTAssertEqual(try JSONDecoder().decode(EliteProfile.self, from: data), profile)

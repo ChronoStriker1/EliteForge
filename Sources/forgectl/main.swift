@@ -170,10 +170,11 @@ func describe(_ profile: EliteProfile, pages: SlotPages) -> String {
     let version = pages.normalMapping[0]
     var lines = [String(format: "Page format %d.%d, curves page %d bytes", version >> 4, version & 0x0F, pages.normalCurves.count)]
     func layer(_ title: String, shift: Bool) {
-        let changed = RemappableControl.allCases.filter { profile.assignment(for: $0, shift: shift) != .standard }
+        let changed = RemappableControl.allCases.filter { profile.assignment(for: $0, shift: shift) != .standard || profile.isSticky($0, shift: shift) }
         lines.append("\(title):" + (changed.isEmpty ? " all default" : ""))
         for control in changed {
-            lines.append("  \(control.shortLabel.padding(toLength: 4, withPad: " ", startingAt: 0)) -> \(profile.assignment(for: control, shift: shift).label)")
+            let sticky = profile.isSticky(control, shift: shift) ? ", sticky" : ""
+            lines.append("  \(control.shortLabel.padding(toLength: 4, withPad: " ", startingAt: 0)) -> \(profile.assignment(for: control, shift: shift).label)\(sticky)")
         }
     }
     layer("Buttons", shift: false)

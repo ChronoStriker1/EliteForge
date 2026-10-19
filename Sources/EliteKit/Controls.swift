@@ -154,6 +154,10 @@ public enum RemappableControl: String, CaseIterable, Codable, CodingKeyRepresent
 
     public var isTrigger: Bool { self == .leftTrigger || self == .rightTrigger }
 
+    /// The firmware toggles only the inputs of mapping bytes 1-16
+    /// (0x1004fe34), so the triggers can't be sticky.
+    public var canBeSticky: Bool { !isTrigger }
+
     /// What the Accessories app lets this control send. A trigger's own
     /// output is its default, and it can only get the other trigger's by
     /// swapping the triggers.
@@ -273,6 +277,10 @@ public enum CurvesLayout {
     public static let stickFlags = 27
     /// Both swap bits: the Accessories app's one Swap sticks setting.
     public static let swapSticks: UInt8 = 0x0C
+    /// Sticky inputs, format 1.1 only: bit n - 1 of the u24 LE at bytes
+    /// 28-30 is input byte n. The 16 inputs that can be sticky fill bytes 28
+    /// and 29; byte 30 holds the LT and RT bits, which the firmware ignores.
+    public static let sticky = 28
 
     public static let defaultPage: [UInt8] = [UInt8](hexString:
         "11 2b 2b 7f 7f bf bf 2b 2b 7f 7f bf bf 2b 2b 7f 7f bf bf 2b 2b 7f 7f bf bf 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00")!

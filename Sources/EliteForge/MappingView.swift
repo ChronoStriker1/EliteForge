@@ -97,7 +97,7 @@ struct MappingView: View {
         path.addLine(to: end)
         let isSelected = selected == control
         let pressed = model.input.isPressed(control)
-        let changed = profile.assignment(for: control, shift: shiftLayer) != .standard
+        let changed = profile.assignment(for: control, shift: shiftLayer) != .standard || profile.isSticky(control, shift: shiftLayer)
         let color: Color = isSelected ? .selection : (pressed ? .xboxGlow : (changed ? .white.opacity(0.45) : .white.opacity(0.16)))
         let active = isSelected || pressed
         context.stroke(path, with: .color(color), lineWidth: active ? 2.5 : 1.2)
@@ -107,7 +107,8 @@ struct MappingView: View {
     private func chip(_ control: RemappableControl) -> some View {
         let assignment = profile.assignment(for: control, shift: shiftLayer)
         let isSelected = selected == control
-        let changed = assignment != .standard
+        let sticky = profile.isSticky(control, shift: shiftLayer)
+        let changed = assignment != .standard || sticky
         let pressed = model.input.isPressed(control)
         return Button {
             pickerOpen = false
@@ -117,7 +118,7 @@ struct MappingView: View {
                 Text(control.shortLabel)
                     .font(.system(size: 17, weight: .bold, design: .rounded))
                     .foregroundStyle(control.isPaddle ? Color.orange : .white)
-                Text(chipDetail(control, assignment))
+                Text(chipDetail(control, assignment) + (sticky ? " · sticky" : ""))
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(changed ? Color.xboxGlow : Color.white.opacity(0.5))
                     .lineLimit(1)
@@ -193,6 +194,9 @@ struct MappingView: View {
                     }
                 }
             }
+            if control.canBeSticky {
+                stickyButton(for: control)
+            }
             Spacer()
             if current != .standard {
                 Button("Reset") {
@@ -204,6 +208,26 @@ struct MappingView: View {
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
         .glassPanel(cornerRadius: 18)
+    }
+
+    /// Sticky inputs live in curves bytes that only format 1.1 pages have.
+    private func stickyButton(for control: RemappableControl) -> some View {
+        let on = profile.isSticky(control, shift: shiftLayer)
+        let supported = model.profileFormat == .v1_1
+        return Button {
+            model.updateDraft { $0.setSticky(!on, for: control, shift: shiftLayer) }
+        } label: {
+            Label("Sticky", systemImage: on ? "pin.fill" : "pin")
+                .font(.callout)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .foregroundStyle(on ? Color.white : .primary)
+                .background(on ? AnyShapeStyle(Color.xbox.gradient) : AnyShapeStyle(Color.white.opacity(0.06)), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(!supported)
+        .help(supported ? "Press the control once to hold its output and again to let go" : "Sticky inputs need controller firmware 5.21.3242 or newer")
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 }
 

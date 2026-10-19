@@ -24,6 +24,7 @@ final class LegacyFileTests: XCTestCase {
         XCTAssertTrue(profile.rightStick.invertY)
         XCTAssertFalse(profile.swapSticks)
         XCTAssertFalse(profile.swapsTriggers)
+        XCTAssertTrue(profile.stickyButtons.isEmpty && profile.shiftStickyButtons.isEmpty)
         XCTAssertEqual(profile.leftStick.deadZone, 28)
         XCTAssertNil(profile.leftStick.preset, "the old approximate Fast start is a custom curve now")
         XCTAssertEqual(profile.light, LightSettings(brightness: 70, color: RGBColor(red: 0xFF, green: 0x6D, blue: 0x20)))
