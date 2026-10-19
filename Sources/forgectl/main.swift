@@ -160,13 +160,13 @@ func slotArgument(_ args: [String], _ index: Int) -> Int {
     return slot
 }
 
-/// The page format the connected controller's firmware takes. The helper
-/// learns the firmware from the HELLO it waits for while capturing, so a
-/// helper that has just started knows it only after the attach.
-func controllerFormat(_ backend: Backend) throws -> ProfileFormat {
+/// The connected controller's firmware, which decides the page format. The
+/// helper learns it from the HELLO it waits for while capturing, so a helper
+/// that has just started knows it only after the attach.
+func connectedFirmware(_ backend: Backend) throws -> String? {
     _ = try backend.perform(.attach)
-    guard case .status(let status) = try backend.perform(.status) else { return ProfileFormat(firmware: nil) }
-    return ProfileFormat(firmware: status.info?.firmware)
+    guard case .status(let status) = try backend.perform(.status) else { return nil }
+    return status.info?.firmware
 }
 
 func describe(_ profile: EliteProfile, pages: SlotPages) -> String {
@@ -290,13 +290,13 @@ func run() throws {
         guard args.count > 2 else { fail("missing file") }
         let data = try Data(contentsOf: URL(fileURLWithPath: args[2]))
         let pages = command == "write"
-            ? ProfileCodec.encode(try JSONDecoder().decode(EliteProfile.self, from: data), format: try controllerFormat(backend))
+            ? ProfileCodec.encode(try JSONDecoder().decode(EliteProfile.self, from: data), format: try ProfileFormat.forWriting(firmware: connectedFirmware(backend)))
             : try JSONDecoder().decode(SlotPages.self, from: data)
         _ = try backend.perform(.writeSlot(slot, pages, serial: nil))
         print("wrote profile \(slot)")
     case "reset":
         let slot = slotArgument(args, 1)
-        _ = try backend.perform(.writeSlot(slot, ProfileCodec.encode(.factoryDefault(name: "Profile \(slot)"), format: try controllerFormat(backend)), serial: nil))
+        _ = try backend.perform(.writeSlot(slot, ProfileCodec.encode(.factoryDefault(name: "Profile \(slot)"), format: try ProfileFormat.forWriting(firmware: connectedFirmware(backend))), serial: nil))
         print("profile \(slot) restored to defaults (\(StickSettings.recommended.deadZonePercent)% stick dead zone)")
     case "light":
         guard args.count > 1 else { fail("missing colour") }

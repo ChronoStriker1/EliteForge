@@ -34,7 +34,8 @@ final class AppModel {
     /// Profiles currently stored on the controller, by slot.
     var slots: [Int: EliteProfile] = [:]
     /// Slots whose pages are in an older format than the firmware writes,
-    /// which is how a slot that was never saved on this firmware reads.
+    /// which is how a slot that was never saved on this firmware reads. Only
+    /// claimed once the firmware is known.
     var blankSlots: Set<Int> = []
     /// Serial of the controller `slots` were read from.
     private var slotsSerial: String?
@@ -131,8 +132,8 @@ final class AppModel {
         return try? JSONDecoder().decode(DeviceInfo.self, from: data)
     }
 
-    /// Page format for the connected controller's firmware.
-    var profileFormat: ProfileFormat { ProfileFormat(firmware: deviceInfo?.firmware) }
+    /// Page format for the connected controller's firmware, nil until it's known.
+    var profileFormat: ProfileFormat? { ProfileFormat(firmware: deviceInfo?.firmware) }
 
     private func rememberDeviceInfo(_ status: ControllerStatus) {
         guard let info = status.info, let serial = status.serialNumber,
@@ -354,7 +355,7 @@ final class AppModel {
             busyMessage = "Reading profile \(slot)…"
             let pages = try await helper.readSlot(slot)
             guard generation == sessionGeneration else { return }
-            if pages.normalMapping.first.map({ $0 < profileFormat.rawValue }) ?? false {
+            if let format = profileFormat, let version = pages.normalMapping.first, version < format.rawValue {
                 blankSlots.insert(slot)
             } else {
                 blankSlots.remove(slot)
@@ -515,6 +516,10 @@ final class AppModel {
             return
         }
         let target = expectedSerial ?? status.serialNumber
+        guard let format = profileFormat else {
+            errorMessage = ControllerError.firmwareUnknown.localizedDescription
+            return
+        }
         if status.activeSlot != 0 {
             pendingWrite = (slot, profile, libraryID, target)
             waitingForDefaultProfile = true
@@ -522,7 +527,7 @@ final class AppModel {
         }
         busyMessage = "Saving to profile \(slot)…"
         defer { busyMessage = nil }
-        let pages = ProfileCodec.encode(profile, format: profileFormat)
+        let pages = ProfileCodec.encode(profile, format: format)
         do {
             _ = try await helper.perform(.writeSlot(slot, pages, serial: target))
             // The session ended meanwhile; the next connect reads the slots again.

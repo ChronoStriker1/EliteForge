@@ -386,11 +386,23 @@ final class CodecTests: XCTestCase {
         XCTAssertEqual(ProfileFormat(firmware: "5.21.3241.9"), .v1_0)
         XCTAssertEqual(ProfileFormat(firmware: "5.11.3113.0"), .v1_0)
         XCTAssertEqual(ProfileFormat(firmware: "4.8.1908.0"), .v1_0)
-        XCTAssertEqual(ProfileFormat(firmware: nil), .v1_1, "unknown firmware writes what EliteForge always has")
-        XCTAssertEqual(ProfileFormat(firmware: "5.21"), .v1_1)
+        XCTAssertNil(ProfileFormat(firmware: nil))
+        XCTAssertNil(ProfileFormat(firmware: "5.21"))
+        XCTAssertNil(ProfileFormat(firmware: "5.x.3242.0"))
         // The firmware as the controller announces it in HELLO.
         let hello = [UInt8](repeating: 0, count: 12) + [5, 0, 21, 0, 0x99, 0x0C, 0, 0] + [UInt8](repeating: 1, count: 8)
         XCTAssertEqual(ProfileFormat(firmware: DeviceInfo(hello: hello)?.firmware), .v1_0, "5.21.3225.0")
+    }
+
+    func testWritesNeedTheFirmware() throws {
+        // A write chooses the format from the firmware, and refuses without it.
+        XCTAssertEqual(try ProfileFormat.forWriting(firmware: "5.21.3225.0"), .v1_0)
+        XCTAssertEqual(try ProfileFormat.forWriting(firmware: "5.22.16.0"), .v1_1)
+        for unknown in [nil, "", "5.21"] {
+            XCTAssertThrowsError(try ProfileFormat.forWriting(firmware: unknown)) { error in
+                XCTAssertEqual(error as? ControllerError, .firmwareUnknown)
+            }
+        }
     }
 
     func testDeadZoneLivesInTheFirstCurvePoint() throws {

@@ -65,6 +65,8 @@ public enum ControllerError: Error, LocalizedError, Equatable {
     /// The controller only accepts writes while its Default profile (slot 0) is active.
     case customProfileActive
     case differentController
+    /// The page format depends on the firmware, which the controller hasn't reported.
+    case firmwareUnknown
     case usb(String)
 
     public var errorDescription: String? {
@@ -77,6 +79,7 @@ public enum ControllerError: Error, LocalizedError, Equatable {
         case .invalidPages: "Profile pages have the wrong size."
         case .customProfileActive: "The controller only accepts changes while it's on Profile 0 (Default). Press the profile button until no profile light is on, then try again."
         case .differentController: "A different controller is connected now, so the change wasn't saved."
+        case .firmwareUnknown: "The controller hasn't reported its firmware version, which decides how profiles are stored, so nothing was saved. Unplug the controller, plug it back in, and try again."
         case .usb(let message): message
         }
     }

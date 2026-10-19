@@ -213,7 +213,7 @@ struct MappingView: View {
     /// Sticky inputs live in curves bytes that only format 1.1 pages have.
     private func stickyButton(for control: RemappableControl) -> some View {
         let on = profile.isSticky(control, shift: shiftLayer)
-        let supported = model.profileFormat == .v1_1
+        let supported = model.profileFormat != .v1_0
         return Button {
             model.updateDraft { $0.setSticky(!on, for: control, shift: shiftLayer) }
         } label: {

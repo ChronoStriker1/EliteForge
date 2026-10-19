@@ -349,13 +349,20 @@ public enum ProfileFormat: UInt8, CaseIterable, Comparable, Sendable {
     case v1_1 = 0x11
 
     /// The format the Accessories app writes for a controller: 1.1 from
-    /// firmware 5.21.3242.0 on, whatever format the slot was in. The
-    /// controller only reports its firmware at power-up, so it can be
-    /// unknown; that gives 1.1, which EliteForge has always written and which
-    /// was tested on 5.22.16.0.
-    public init(firmware: String?) {
+    /// firmware 5.21.3242.0 on, whatever format the slot was in. nil when the
+    /// firmware isn't known: the controller reports it only in HELLO, and a
+    /// guess can write pages the firmware doesn't take.
+    public init?(firmware: String?) {
         let parts = firmware?.split(separator: ".").compactMap { Int($0) } ?? []
-        self = parts.count == 4 && parts.lexicographicallyPrecedes([5, 21, 3242, 0]) ? .v1_0 : .v1_1
+        guard parts.count == 4 else { return nil }
+        self = parts.lexicographicallyPrecedes([5, 21, 3242, 0]) ? .v1_0 : .v1_1
+    }
+
+    /// The format to write to a controller with `firmware`. Refuses while
+    /// the firmware is unknown rather than guess.
+    public static func forWriting(firmware: String?) throws -> ProfileFormat {
+        guard let format = ProfileFormat(firmware: firmware) else { throw ControllerError.firmwareUnknown }
+        return format
     }
 
     public var curvesSize: Int { self == .v1_0 ? 28 : 43 }
@@ -600,7 +607,7 @@ public enum ProfileCodec {
     }
 
     /// Pages in `format`, which the controller's firmware decides
-    /// (`ProfileFormat(firmware:)`), not the pages the profile was read from.
+    /// (`ProfileFormat.forWriting(firmware:)`), not the pages the profile was read from.
     public static func encode(_ profile: EliteProfile, format: ProfileFormat) -> SlotPages {
         let base = profile.basePages.isValid ? profile.basePages : .factoryDefault
         func versioned(_ page: [UInt8]) -> [UInt8] {
