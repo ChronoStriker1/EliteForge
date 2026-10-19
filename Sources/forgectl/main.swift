@@ -289,9 +289,14 @@ func run() throws {
         let slot = slotArgument(args, 1)
         guard args.count > 2 else { fail("missing file") }
         let data = try Data(contentsOf: URL(fileURLWithPath: args[2]))
-        let pages = command == "write"
-            ? ProfileCodec.encode(try JSONDecoder().decode(EliteProfile.self, from: data), format: try ProfileFormat.forWriting(firmware: connectedFirmware(backend)))
-            : try JSONDecoder().decode(SlotPages.self, from: data)
+        let pages: SlotPages
+        if command == "write" {
+            let profile = try JSONDecoder().decode(EliteProfile.self, from: data)
+            pages = ProfileCodec.encode(profile, format: try ProfileFormat.forWriting(firmware: connectedFirmware(backend)))
+        } else {
+            pages = try JSONDecoder().decode(SlotPages.self, from: data)
+            try pages.checkWritable(firmware: connectedFirmware(backend))
+        }
         _ = try backend.perform(.writeSlot(slot, pages, serial: nil))
         print("wrote profile \(slot)")
     case "reset":

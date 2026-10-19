@@ -367,6 +367,9 @@ public enum ProfileFormat: UInt8, CaseIterable, Comparable, Sendable {
 
     public var curvesSize: Int { self == .v1_0 ? 28 : 43 }
 
+    /// "1.1".
+    public var label: String { "\(rawValue >> 4).\(rawValue & 0x0F)" }
+
     public static func < (lhs: ProfileFormat, rhs: ProfileFormat) -> Bool { lhs.rawValue < rhs.rawValue }
 }
 
@@ -388,6 +391,16 @@ public struct SlotPages: Hashable, Codable, Sendable {
         normalMapping: MappingLayout.defaultPage, normalCurves: CurvesLayout.defaultPage,
         shiftMapping: MappingLayout.defaultPage, shiftCurves: CurvesLayout.defaultPage
     )
+
+    /// Refuses pages a controller with `firmware` doesn't take: any while the
+    /// firmware is unknown, and pages laid out in the other format. Byte 0
+    /// isn't checked, since pages read back keep the version they were saved with.
+    public func checkWritable(firmware: String?) throws {
+        let format = try ProfileFormat.forWriting(firmware: firmware)
+        guard normalCurves.count == format.curvesSize, shiftCurves.count == format.curvesSize else {
+            throw ControllerError.wrongPageFormat(expected: format)
+        }
+    }
 
     /// Mapping pages of 56 bytes and both curves pages the size of one format.
     public var isValid: Bool {

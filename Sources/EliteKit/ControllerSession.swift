@@ -67,6 +67,8 @@ public enum ControllerError: Error, LocalizedError, Equatable {
     case differentController
     /// The page format depends on the firmware, which the controller hasn't reported.
     case firmwareUnknown
+    /// Raw pages laid out in another format than the firmware takes.
+    case wrongPageFormat(expected: ProfileFormat)
     case usb(String)
 
     public var errorDescription: String? {
@@ -80,6 +82,7 @@ public enum ControllerError: Error, LocalizedError, Equatable {
         case .customProfileActive: "The controller only accepts changes while it's on Profile 0 (Default). Press the profile button until no profile light is on, then try again."
         case .differentController: "A different controller is connected now, so the change wasn't saved."
         case .firmwareUnknown: "The controller hasn't reported its firmware version, which decides how profiles are stored, so nothing was saved. Unplug the controller, plug it back in, and try again."
+        case .wrongPageFormat(let format): "These pages aren't in format \(format.label), the one this controller's firmware takes, so they weren't written."
         case .usb(let message): message
         }
     }

@@ -405,6 +405,23 @@ final class CodecTests: XCTestCase {
         }
     }
 
+    func testRawPagesMustMatchTheFirmwaresFormat() throws {
+        let current = SlotPages.factoryDefault
+        let older = SlotPages(normalMapping: Captured.version1_0(Captured.restoredDefault), normalCurves: Captured.version1_0(CurvesLayout.defaultPage),
+                              shiftMapping: Captured.version1_0(Captured.restoredDefault), shiftCurves: Captured.version1_0(CurvesLayout.defaultPage))
+        XCTAssertNoThrow(try current.checkWritable(firmware: "5.22.16.0"))
+        XCTAssertNoThrow(try older.checkWritable(firmware: "5.21.3225.0"))
+        XCTAssertThrowsError(try current.checkWritable(firmware: "5.21.3225.0")) { XCTAssertEqual($0 as? ControllerError, .wrongPageFormat(expected: .v1_0)) }
+        XCTAssertThrowsError(try older.checkWritable(firmware: "5.22.16.0")) { XCTAssertEqual($0 as? ControllerError, .wrongPageFormat(expected: .v1_1)) }
+        XCTAssertThrowsError(try current.checkWritable(firmware: nil)) { XCTAssertEqual($0 as? ControllerError, .firmwareUnknown) }
+
+        // Only the layout is checked: pages read back keep the version byte they were saved with.
+        var oldVersionByte = current
+        oldVersionByte.normalMapping[0] = 0x10
+        oldVersionByte.normalCurves[0] = 0x10
+        XCTAssertNoThrow(try oldVersionByte.checkWritable(firmware: "5.22.16.0"))
+    }
+
     func testDeadZoneLivesInTheFirstCurvePoint() throws {
         var stick = StickSettings()
         XCTAssertEqual(stick.deadZone, 0)
