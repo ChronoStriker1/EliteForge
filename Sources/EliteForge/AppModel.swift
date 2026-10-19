@@ -123,8 +123,9 @@ final class AppModel {
     /// The capture was lost while connecting; try again when that attempt ends.
     private var reconnectAfterAttach = false
 
-    /// Firmware and IDs come from the controller's HELLO, which it only sends
-    /// once per power-up, so remember them per serial number.
+    /// Firmware and IDs from the controller's HELLO, remembered per serial
+    /// number so they can be shown before this connection's HELLO arrives.
+    /// For display only: profile writes use `profileFormat`.
     var deviceInfo: DeviceInfo? {
         if let info = status.info { return info }
         guard let serial = status.serialNumber,
@@ -132,8 +133,9 @@ final class AppModel {
         return try? JSONDecoder().decode(DeviceInfo.self, from: data)
     }
 
-    /// Page format for the connected controller's firmware, nil until it's known.
-    var profileFormat: ProfileFormat? { ProfileFormat(firmware: deviceInfo?.firmware) }
+    /// Page format for the firmware the controller reported in this capture,
+    /// nil until it has. A remembered firmware can be out of date.
+    var profileFormat: ProfileFormat? { ProfileFormat(firmware: status.writableFirmware) }
 
     private func rememberDeviceInfo(_ status: ControllerStatus) {
         guard let info = status.info, let serial = status.serialNumber,

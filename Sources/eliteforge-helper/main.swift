@@ -119,7 +119,9 @@ final class ControllerManager: @unchecked Sendable {
             case .readSlot(let slot):
                 return .pages(try attach(client).readSlot(slot))
             case .writeSlot(let slot, let pages, let serial):
-                try attach(client, expecting: serial).writeSlot(slot, pages: pages)
+                let controller = try attachController(client, expecting: serial)
+                try pages.checkWritable(firmware: controller.deviceInfo?.firmware)
+                try controller.session.writeSlot(slot, pages: pages)
                 return .ok
             case .readName:
                 return .name(try attach(client).readName())
@@ -256,8 +258,8 @@ final class ControllerManager: @unchecked Sendable {
             inputDirty = true
             status.attached = true
             status.present = true
-            // Keep the last HELLO's details only for the same controller.
-            status.info = controller.deviceInfo ?? (status.serialNumber == controller.serialNumber ? status.info : nil)
+            // Only this capture's HELLO: writes choose the page format by it.
+            status.info = controller.deviceInfo
             status.serialNumber = controller.serialNumber
             return true
         }

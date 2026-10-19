@@ -4,9 +4,10 @@ import Foundation
 /// Mach service the root helper listens on. Also its launchd label.
 public let helperServiceName = "com.eliteforge.helper"
 
-/// Bumped whenever the request/reply format changes, so the app can tell
-/// the installed helper is out of date and offer to reinstall it.
-public let helperProtocolVersion = 18
+/// Bumped whenever the request/reply format or its meaning changes, so the
+/// app can tell the installed helper is out of date and offer to reinstall
+/// it. 19: `ControllerStatus.info` comes from the current capture only.
+public let helperProtocolVersion = 19
 
 /// The helper's XPC interface. Requests and replies are JSON-encoded
 /// `HelperRequest` / `HelperReply` values, which keeps the XPC surface to one method.
@@ -63,7 +64,7 @@ extension HelperRequest {
     public static func capturedFirmware(using perform: (HelperRequest) throws -> HelperReply) throws -> String? {
         _ = try perform(.attach)
         guard case .status(let status) = try perform(.status) else { return nil }
-        return status.info?.firmware
+        return status.writableFirmware
     }
 }
 
@@ -89,6 +90,7 @@ public struct ControllerStatus: Codable, Sendable, Equatable {
     public var present: Bool
     /// The helper has captured the controller.
     public var attached: Bool
+    /// From the HELLO of the current capture, or of the last one once released.
     public var info: DeviceInfo?
     public var serialNumber: String?
     public var battery: BatteryStatus?
@@ -104,6 +106,11 @@ public struct ControllerStatus: Codable, Sendable, Equatable {
         self.battery = battery
         self.activeSlot = activeSlot
     }
+
+    /// The firmware a profile write may go by: what the controller reported
+    /// in this capture. One remembered from an earlier connection can be out
+    /// of date, since the controller can be updated elsewhere.
+    public var writableFirmware: String? { attached ? info?.firmware : nil }
 }
 
 public enum HelperCoding {

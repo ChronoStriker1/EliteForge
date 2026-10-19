@@ -111,6 +111,7 @@ final class DirectBackend: Backend {
         case .readSlot(let slot):
             return .pages(try session.readSlot(slot))
         case .writeSlot(let slot, let pages, _):
+            try pages.checkWritable(firmware: controller.deviceInfo?.firmware)
             try session.writeSlot(slot, pages: pages)
             return .ok
         case .readName:
