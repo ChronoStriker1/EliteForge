@@ -92,7 +92,7 @@ public struct StickCurve: Hashable, Codable, Sendable {
     /// (fractions of full deflection). Points 2 and 3 stay in order.
     public func moving(point index: Int, toPlaced x: Double, _ y: Double) -> StickCurve {
         func byte(_ fraction: Double) -> Int { Int((max(0, min(1, fraction)) * 255).rounded()) }
-        /// The stored fraction that the firmware places at `placed` above `base`.
+        // The stored fraction that the firmware places at `placed` above `base`.
         func relative(_ placed: Double, above base: Double) -> Double { base < 1 ? (placed - base) / (1 - base) : 0 }
         var points = self.points
         let first = placedPoints[0]

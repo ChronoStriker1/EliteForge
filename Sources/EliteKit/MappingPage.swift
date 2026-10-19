@@ -2,8 +2,8 @@ import Foundation
 
 /// One 56-byte mapping page as typed values: what each input does in one
 /// layer, and the settings the page carries for the whole profile. Bytes it
-/// doesn't model, such as the version and the LED channels at 49-51, stay
-/// as they were in the page it was read from.
+/// doesn't model, such as the version, the LED channels at 49-50 and byte
+/// 51, stay as they were in the page it was read from.
 public struct MappingPage: Hashable, Sendable {
     /// Inputs that don't do their standard job in this layer.
     public var assignments: [RemappableControl: Assignment]
