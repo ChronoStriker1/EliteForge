@@ -230,15 +230,25 @@ struct SticksEditor: View {
     let profile: EliteProfile
 
     var body: some View {
-        HStack(alignment: .top, spacing: 18) {
-            stickCard("Left thumbstick", stick: profile.leftStick, x: model.input.rawLeftStickX, y: model.input.rawLeftStickY) { change in
-                model.updateDraft { change(&$0.leftStick) }
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Swap sticks", isOn: Binding(get: { profile.swapSticks }, set: { on in model.updateDraft { $0.swapSticks = on } }))
+                    .toggleStyle(.switch)
+                    .tint(.xbox)
+                Text("The left stick moves as the right one and the other way round. The stick clicks stay where they are; remap them on the Mapping tab.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            stickCard("Right thumbstick", stick: profile.rightStick, x: model.input.rawRightStickX, y: model.input.rawRightStickY) { change in
-                model.updateDraft { change(&$0.rightStick) }
+            HStack(alignment: .top, spacing: 18) {
+                stickCard("Left thumbstick", stick: profile.leftStick, x: model.input.rawLeftStickX, y: model.input.rawLeftStickY) { change in
+                    model.updateDraft { change(&$0.leftStick) }
+                }
+                stickCard("Right thumbstick", stick: profile.rightStick, x: model.input.rawRightStickX, y: model.input.rawRightStickY) { change in
+                    model.updateDraft { change(&$0.rightStick) }
+                }
             }
+            .glassGroup()
         }
-        .glassGroup()
     }
 
     private func stickCard(_ title: String, stick: StickSettings, x: Int16, y: Int16, update: @escaping ((inout StickSettings) -> Void) -> Void) -> some View {
@@ -553,9 +563,13 @@ struct TriggersEditor: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            Toggle("Same range for both triggers", isOn: Binding(get: { link.isOn }, set: { on in
-                if on { model.updateDraft { link.turnOn(in: &$0) } } else { link.turnOff() }
-            }))
+            HStack(spacing: 28) {
+                Toggle("Same range for both triggers", isOn: Binding(get: { link.isOn }, set: { on in
+                    if on { model.updateDraft { link.turnOn(in: &$0) } } else { link.turnOff() }
+                }))
+                Toggle("Swap triggers", isOn: Binding(get: { profile.swapsTriggers }, set: { on in model.updateDraft { $0.swapsTriggers = on } }))
+                    .help("Each trigger acts as the other, with or without Shift held")
+            }
             .toggleStyle(.switch)
             .tint(.xbox)
             .frame(maxWidth: .infinity, alignment: .leading)

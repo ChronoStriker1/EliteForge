@@ -401,6 +401,8 @@ public struct EliteProfile: Hashable, Codable, Sendable, Identifiable {
     public var shiftButtons: [RemappableControl: Assignment]
     public var leftStick: StickSettings
     public var rightStick: StickSettings
+    /// Each stick moves as the other, in both layers. The stick clicks stay put.
+    public var swapSticks: Bool
     public var leftTrigger: TriggerSettings
     public var rightTrigger: TriggerSettings
     public var vibration: VibrationSettings
@@ -413,7 +415,7 @@ public struct EliteProfile: Hashable, Codable, Sendable, Identifiable {
     public init(
         id: UUID = UUID(), name: String, modified: Date = Date(),
         buttons: [RemappableControl: Assignment] = [:], shiftButtons: [RemappableControl: Assignment] = [:],
-        leftStick: StickSettings = StickSettings(), rightStick: StickSettings = StickSettings(),
+        leftStick: StickSettings = StickSettings(), rightStick: StickSettings = StickSettings(), swapSticks: Bool = false,
         leftTrigger: TriggerSettings = TriggerSettings(), rightTrigger: TriggerSettings = TriggerSettings(),
         vibration: VibrationSettings = VibrationSettings(), light: LightSettings = LightSettings(),
         basePages: SlotPages = .factoryDefault
@@ -425,6 +427,7 @@ public struct EliteProfile: Hashable, Codable, Sendable, Identifiable {
         self.shiftButtons = shiftButtons
         self.leftStick = leftStick
         self.rightStick = rightStick
+        self.swapSticks = swapSticks
         self.leftTrigger = leftTrigger
         self.rightTrigger = rightTrigger
         self.vibration = vibration
@@ -432,8 +435,46 @@ public struct EliteProfile: Hashable, Codable, Sendable, Identifiable {
         self.basePages = basePages
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case id, name, modified, buttons, shiftButtons, leftStick, rightStick, swapSticks, leftTrigger, rightTrigger, vibration, light, basePages
+    }
+
+    /// Setups saved before swap sticks don't have it.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        modified = try container.decode(Date.self, forKey: .modified)
+        buttons = try container.decode([RemappableControl: Assignment].self, forKey: .buttons)
+        shiftButtons = try container.decode([RemappableControl: Assignment].self, forKey: .shiftButtons)
+        leftStick = try container.decode(StickSettings.self, forKey: .leftStick)
+        rightStick = try container.decode(StickSettings.self, forKey: .rightStick)
+        swapSticks = try container.decodeIfPresent(Bool.self, forKey: .swapSticks) ?? false
+        leftTrigger = try container.decode(TriggerSettings.self, forKey: .leftTrigger)
+        rightTrigger = try container.decode(TriggerSettings.self, forKey: .rightTrigger)
+        vibration = try container.decode(VibrationSettings.self, forKey: .vibration)
+        light = try container.decode(LightSettings.self, forKey: .light)
+        basePages = try container.decode(SlotPages.self, forKey: .basePages)
+    }
+
     public func assignment(for control: RemappableControl, shift: Bool) -> Assignment {
         (shift ? shiftButtons : buttons)[control] ?? .standard
+    }
+
+    /// Whether each trigger sends the other in a layer.
+    public func swapsTriggers(shift: Bool) -> Bool {
+        RemappableControl.triggers.allSatisfy { assignment(for: $0, shift: shift) == Assignment.swappedTriggers[$0] }
+    }
+
+    /// Swap triggers, in both layers so holding Shift doesn't swap them back.
+    public var swapsTriggers: Bool {
+        get { swapsTriggers(shift: false) && swapsTriggers(shift: true) }
+        set {
+            for shift in [false, true] {
+                setAssignment(newValue ? .button(.rightTrigger) : .standard, for: .leftTrigger, shift: shift)
+                setAssignment(newValue ? .button(.leftTrigger) : .standard, for: .rightTrigger, shift: shift)
+            }
+        }
     }
 
     public mutating func setAssignment(_ assignment: Assignment, for control: RemappableControl, shift: Bool) {
@@ -450,9 +491,18 @@ public struct EliteProfile: Hashable, Codable, Sendable, Identifiable {
             return
         }
         let wasShift = (shift ? shiftButtons : buttons)[control] == .shift
+        let wasSwapped = swapsTriggers(shift: shift)
         if shift { shiftButtons[control] = value } else { buttons[control] = value }
         if wasShift {
             if shift { buttons[control] = nil } else { shiftButtons[control] = nil }
+        }
+        // A trigger only sends the other trigger as a swap: sending one to the
+        // other swaps them, and remapping either ends the swap.
+        guard control.isTrigger, let other = RemappableControl.triggers.first(where: { $0 != control }) else { return }
+        if assignment == Assignment.swappedTriggers[control] {
+            if shift { shiftButtons[other] = Assignment.swappedTriggers[other] } else { buttons[other] = Assignment.swappedTriggers[other] }
+        } else if wasSwapped {
+            if shift { shiftButtons[other] = nil } else { buttons[other] = nil }
         }
     }
 
@@ -460,7 +510,7 @@ public struct EliteProfile: Hashable, Codable, Sendable, Identifiable {
     /// the recommended stick dead zone.
     public var hasDefaultSettings: Bool {
         buttons.isEmpty && shiftButtons.isEmpty
-            && leftStick == .recommended && rightStick == .recommended
+            && leftStick == .recommended && rightStick == .recommended && !swapSticks
             && leftTrigger == TriggerSettings() && rightTrigger == TriggerSettings()
             && vibration == VibrationSettings() && light == LightSettings()
     }
@@ -507,13 +557,14 @@ public enum ProfileCodec {
         guard pages.isValid else { throw CodecError.badPageSize }
         let normal = MappingPage(pages.normalMapping)
         let curves = pages.normalCurves
-        let inversion = curves[CurvesLayout.inversion]
+        let stickFlags = curves[CurvesLayout.stickFlags]
         return EliteProfile(
             id: id, name: name,
             buttons: normal.assignments,
             shiftButtons: MappingPage(pages.shiftMapping).assignments,
-            leftStick: StickSettings(curve: StickCurve(bytes: curves[1..<7]), invertY: inversion & 0x01 != 0),
-            rightStick: StickSettings(curve: StickCurve(bytes: curves[13..<19]), invertY: inversion & 0x02 != 0),
+            leftStick: StickSettings(curve: StickCurve(bytes: curves[1..<7]), invertY: stickFlags & 0x01 != 0),
+            rightStick: StickSettings(curve: StickCurve(bytes: curves[13..<19]), invertY: stickFlags & 0x02 != 0),
+            swapSticks: stickFlags & CurvesLayout.swapSticks == CurvesLayout.swapSticks,
             leftTrigger: normal.leftTrigger.settings,
             rightTrigger: normal.rightTrigger.settings,
             vibration: normal.vibration,
@@ -560,7 +611,7 @@ public enum ProfileCodec {
     static func encodeCurves(_ base: [UInt8], profile: EliteProfile) -> [UInt8] {
         var page = base
         let original = profile.basePages.isValid ? profile.basePages.normalCurves : CurvesLayout.defaultPage
-        let originalInversion = original[CurvesLayout.inversion]
+        let originalFlags = original[CurvesLayout.stickFlags]
         let sticks: [(StickSettings, Int, UInt8)] = [(profile.leftStick, 0, 0x01), (profile.rightStick, 2, 0x02)]
         for (stick, firstAxis, bit) in sticks {
             // Decoding exposes the X-axis curve for each stick. Only when the
@@ -573,9 +624,13 @@ public enum ProfileCodec {
                     page.replaceSubrange(offset..<offset + 6, with: stick.curve.bytes)
                 }
             }
-            if (originalInversion & bit != 0) != stick.invertY {
-                if stick.invertY { page[CurvesLayout.inversion] |= bit } else { page[CurvesLayout.inversion] &= ~bit }
+            if (originalFlags & bit != 0) != stick.invertY {
+                if stick.invertY { page[CurvesLayout.stickFlags] |= bit } else { page[CurvesLayout.stickFlags] &= ~bit }
             }
+        }
+        // A page with only one of the swap bits keeps it unless the setting changes.
+        if (originalFlags & CurvesLayout.swapSticks == CurvesLayout.swapSticks) != profile.swapSticks {
+            if profile.swapSticks { page[CurvesLayout.stickFlags] |= CurvesLayout.swapSticks } else { page[CurvesLayout.stickFlags] &= ~CurvesLayout.swapSticks }
         }
         return page
     }

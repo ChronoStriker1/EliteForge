@@ -186,6 +186,9 @@ func describe(_ profile: EliteProfile, pages: SlotPages) -> String {
         trigger.deadZone == 0 ? "full at \(trigger.rangePercent)%" : "from \(trigger.deadZonePercent)%, full at \(trigger.rangePercent)%"
     }
     lines.append("Trigger range: left \(range(profile.leftTrigger)), right \(range(profile.rightTrigger))")
+    let swaps = [("sticks", profile.swapSticks), ("triggers", profile.swapsTriggers(shift: false)), ("triggers while Shift is held", profile.swapsTriggers(shift: true))]
+    let swapped = swaps.filter { $0.1 }.map { $0.0 }
+    if !swapped.isEmpty { lines.append("Swapped: " + swapped.joined(separator: ", ")) }
     // The app writes one range to the full and half lock positions and (0, 0)
     // to short; pages written otherwise get their pairs shown.
     let page = MappingPage(pages.normalMapping)

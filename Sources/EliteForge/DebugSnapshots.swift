@@ -35,6 +35,7 @@ enum DebugSnapshots {
         profile.light.brightness = 70
         profile.leftTrigger = TriggerSettings(range: 0xAB, deadZone: 0x1A)
         profile.rightTrigger = profile.leftTrigger
+        profile.swapSticks = true
         model.slots[1] = profile
         model.draft = profile
         model.draftSource = .slot(1)
@@ -53,7 +54,7 @@ enum DebugSnapshots {
 
         render("controller-art", size: CGSize(width: 1000, height: 717), ZStack { CanvasBackground(); EliteControllerArt(input: input, highlighted: [.leftTrigger, .dpadLeft, .paddleLowerLeft], brightness: 80, lightColor: LightColor(red: 0x10, green: 0x40, blue: 0xFF)) })
         render("mapping", size: CGSize(width: 1180, height: 760), ZStack { CanvasBackground(); MappingView(profile: profile, selected: .constant(.paddleUpperRight), pickerOpen: .constant(false)) })
-        render("sticks", size: CGSize(width: 1180, height: 640), ZStack { CanvasBackground(); SticksEditor(profile: profile).padding(20) })
+        render("sticks", size: CGSize(width: 1180, height: 1180), ZStack { CanvasBackground(); SticksEditor(profile: profile).padding(20) })
         render("triggers", size: CGSize(width: 1180, height: 480), ZStack { CanvasBackground(); TriggersEditor(profile: profile).padding(20) })
         render("vibration", size: CGSize(width: 1180, height: 460), ZStack { CanvasBackground(); VibrationEditor(profile: profile).padding(20) })
         render("light", size: CGSize(width: 900, height: 320), ZStack { CanvasBackground(); LightEditor(profile: profile).padding(20) })
@@ -88,6 +89,10 @@ enum DebugSnapshots {
         }
         render("assignment-picker", size: CGSize(width: 280, height: 660), ZStack { CanvasBackground(); AssignmentPicker(control: .a, shiftLayer: false, current: .disabled) { _ in } })
         let key = Assignment.key(KeyCombination(KeyboardKey(usage: 0x2C), modifiers: [.control, .alt]))
+        var swapped = profile
+        swapped.swapsTriggers = true
+        render("triggers-swapped", size: CGSize(width: 1180, height: 480), ZStack { CanvasBackground(); TriggersEditor(profile: swapped).padding(20) })
+        render("assignment-picker-swapped", size: CGSize(width: 280, height: 600), ZStack { CanvasBackground(); AssignmentPicker(control: .leftTrigger, shiftLayer: false, current: .button(.rightTrigger)) { _ in } })
         render("assignment-picker-trigger-key", size: CGSize(width: 280, height: 600), ZStack { CanvasBackground(); AssignmentPicker(control: .leftTrigger, shiftLayer: false, current: key) { _ in } })
         exit(0)
     }

@@ -94,4 +94,73 @@ final class MappingPageTests: XCTestCase {
         XCTAssertEqual(page.assignments, [.paddleUpperLeft: .code(0x1A), .x: .code(0x12), .dpadUp: .code(0x02)])
         XCTAssertEqual(page.bytes, bytes)
     }
+
+    func testSwapTriggersIsBit0WithBytes17And18AtZero() throws {
+        // Swapping replaces RT's key from the keyboard capture: the bytes,
+        // RT's flag and its modifier nibble all go to 0.
+        var base = Captured.rightTriggerF
+        base[27] = 0x20
+        var expected = Captured.restoredDefault
+        expected[52] = 0x01
+
+        var profile = try ProfileCodec.decode(Captured.slot(normal: base, shift: Captured.restoredDefault), name: "x")
+        XCTAssertFalse(profile.swapsTriggers)
+        profile.swapsTriggers = true
+        let pages = ProfileCodec.encode(profile, format: .v1_1)
+        XCTAssertEqual(pages.normalMapping, expected)
+        XCTAssertEqual(pages.shiftMapping, expected)
+
+        let decoded = try ProfileCodec.decode(pages, name: "x")
+        XCTAssertTrue(decoded.swapsTriggers)
+        XCTAssertEqual(decoded.buttons, Assignment.swappedTriggers)
+
+        profile.swapsTriggers = false
+        XCTAssertTrue(profile.buttons.isEmpty && profile.shiftButtons.isEmpty)
+        XCTAssertEqual(ProfileCodec.encode(profile, format: .v1_1).normalMapping, Captured.restoredDefault)
+    }
+
+    func testATriggerOnlyGetsTheOtherTriggerBySwapping() {
+        var profile = EliteProfile.factoryDefault()
+        profile.setAssignment(.button(.rightTrigger), for: .leftTrigger, shift: false)
+        XCTAssertTrue(profile.swapsTriggers(shift: false))
+        XCTAssertFalse(profile.swapsTriggers(shift: true), "only the layer it was set in")
+        XCTAssertFalse(profile.swapsTriggers)
+
+        // Remapping either trigger ends the swap; the other goes back to its default.
+        profile.setAssignment(.button(.a), for: .rightTrigger, shift: false)
+        XCTAssertEqual(profile.buttons, [.rightTrigger: .button(.a)])
+
+        // Mapped to each other in one layer, the page holds the flag, not codes 0x10 and 0x11.
+        profile.setAssignment(.button(.leftTrigger), for: .rightTrigger, shift: true)
+        let pages = ProfileCodec.encode(profile, format: .v1_1)
+        XCTAssertEqual([pages.shiftMapping[17], pages.shiftMapping[18], pages.shiftMapping[52]], [0, 0, 0x01])
+        XCTAssertEqual([pages.normalMapping[17], pages.normalMapping[18], pages.normalMapping[52]], [0, 0x04, 0])
+    }
+
+    func testSwapSticksSetsBothSwapBitsInBothLayers() throws {
+        // Right stick inverted (bit 1) from the capture; swap adds bits 2 and 3.
+        let base = Captured.slot(normal: Captured.restoredDefault, curves: Captured.rightStickInverted)
+        var profile = try ProfileCodec.decode(base, name: "x")
+        XCTAssertFalse(profile.swapSticks)
+        profile.swapSticks = true
+        let pages = ProfileCodec.encode(profile, format: .v1_1)
+        var expected = Captured.rightStickInverted
+        expected[27] = 0x0E
+        XCTAssertEqual(pages.normalCurves, expected)
+        var expectedShift = CurvesLayout.defaultPage
+        expectedShift[27] = 0x0C
+        XCTAssertEqual(pages.shiftCurves, expectedShift)
+        XCTAssertTrue(try ProfileCodec.decode(pages, name: "x").swapSticks)
+        XCTAssertEqual(pages.normalMapping, Captured.restoredDefault)
+
+        // A page with only the X axes swapped keeps that until the setting changes.
+        var xOnly = CurvesLayout.defaultPage
+        xOnly[27] = 0x04
+        var partial = try ProfileCodec.decode(SlotPages(normalMapping: Captured.restoredDefault, normalCurves: xOnly, shiftMapping: Captured.restoredDefault, shiftCurves: xOnly), name: "x")
+        XCTAssertFalse(partial.swapSticks)
+        partial.setAssignment(.button(.b), for: .a, shift: false)
+        XCTAssertEqual(ProfileCodec.encode(partial, format: .v1_1).normalCurves[27], 0x04)
+        partial.swapSticks = true
+        XCTAssertEqual(ProfileCodec.encode(partial, format: .v1_1).normalCurves[27], 0x0C)
+    }
 }

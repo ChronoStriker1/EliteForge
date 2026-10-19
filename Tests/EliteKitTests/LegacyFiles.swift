@@ -22,6 +22,8 @@ final class LegacyFileTests: XCTestCase {
         XCTAssertEqual(profile.shiftButtons[.leftTrigger], .key(KeyCombination(KeyboardKey(usage: 0x2C))))
         XCTAssertEqual(profile.shiftButtons[.a], .button(.y))
         XCTAssertTrue(profile.rightStick.invertY)
+        XCTAssertFalse(profile.swapSticks)
+        XCTAssertFalse(profile.swapsTriggers)
         XCTAssertEqual(profile.leftStick.deadZone, 28)
         XCTAssertNil(profile.leftStick.preset, "the old approximate Fast start is a custom curve now")
         XCTAssertEqual(profile.light, LightSettings(brightness: 70, color: RGBColor(red: 0xFF, green: 0x6D, blue: 0x20)))

@@ -136,6 +136,7 @@ struct MappingView: View {
     }
 
     private func chipDetail(_ control: RemappableControl, _ assignment: Assignment) -> String {
+        if control.isTrigger, profile.swapsTriggers(shift: shiftLayer) { return "Swapped" }
         switch assignment {
         case .standard:
             if control.isPaddle, let button = control.standardOutput { return "→ \(button.shortLabel) (default)" }
@@ -219,6 +220,9 @@ struct AssignmentPicker: View {
                 .font(.headline)
                 .padding(.horizontal, 10)
                 .padding(.bottom, 6)
+            if let unlisted {
+                row(unlisted, current)
+            }
             // A trigger's byte is 0 for "keep the trigger", so it can't be unmapped.
             row(defaultLabel, .standard)
             if !control.isTrigger {
@@ -271,6 +275,17 @@ struct AssignmentPicker: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
+    }
+
+    /// The current assignment when the list doesn't offer it: swapped
+    /// triggers, or an output read from the controller or a file.
+    private var unlisted: String? {
+        switch current {
+        case .standard, .disabled, .shift, .key: return nil
+        case .button(let button) where control.targets.contains(button): return nil
+        case .button(let button) where control.isTrigger: return "Swapped with \(button.shortLabel) (Triggers tab)"
+        default: return current.label
+        }
     }
 
     private var currentKey: KeyCombination? {

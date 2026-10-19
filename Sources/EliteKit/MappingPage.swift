@@ -27,6 +27,9 @@ public struct MappingPage: Hashable, Sendable {
                 assignments[control] = Self.assignment(forCode: code)
             }
         }
+        if flags & MappingLayout.swapTriggers != 0 {
+            assignments.merge(Assignment.swappedTriggers) { _, swapped in swapped }
+        }
         self.assignments = assignments
         let rumble = MappingLayout.rumbleIntensity
         vibration = VibrationSettings(leftGrip: bytes[rumble + 1], rightGrip: bytes[rumble], leftTrigger: bytes[rumble + 3], rightTrigger: bytes[rumble + 2])
@@ -46,14 +49,18 @@ public struct MappingPage: Hashable, Sendable {
     public var bytes: [UInt8] {
         var page = base
         var flags = Self.flags(base)
+        // Swapped triggers are the flag alone; their own bytes say "keep the trigger".
+        let swapped = RemappableControl.triggers.allSatisfy { assignments[$0] == Assignment.swappedTriggers[$0] }
+        flags = swapped ? flags | MappingLayout.swapTriggers : flags & ~MappingLayout.swapTriggers
+        let written = swapped ? assignments.filter { !$0.key.isTrigger } : assignments
         for control in RemappableControl.allCases {
             var modifiers = KeyModifiers()
-            if case .key(let key) = assignments[control] {
+            if case .key(let key) = written[control] {
                 page[control.mappingOffset] = key.key.usage
                 flags |= Self.keyboardFlag(control)
                 modifiers = key.modifiers
             } else {
-                page[control.mappingOffset] = Self.code(for: assignments[control] ?? .standard, control: control)
+                page[control.mappingOffset] = Self.code(for: written[control] ?? .standard, control: control)
                 flags &= ~Self.keyboardFlag(control)
             }
             let (index, shift) = Self.modifierNibble(control)

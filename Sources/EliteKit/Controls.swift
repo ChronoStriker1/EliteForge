@@ -210,6 +210,11 @@ public enum Assignment: Hashable, Codable, Sendable {
     /// kept as read.
     case code(UInt8)
 
+    /// What each trigger is assigned while the triggers are swapped: each
+    /// sends the other. The Accessories app stores that as the swap flag
+    /// (0x180e9aeac), and only allows it that way.
+    public static let swappedTriggers: [RemappableControl: Assignment] = [.leftTrigger: .button(.rightTrigger), .rightTrigger: .button(.leftTrigger)]
+
     public var label: String {
         switch self {
         case .standard: "Default"
@@ -248,8 +253,10 @@ public enum MappingLayout {
     public static let color = 46 // R, G, B
     /// A u32 LE flag word. Bit 14 + (n - 1) is set when input byte n holds
     /// a HID keyboard usage instead of a code: bit 30 (0x40 in byte 55) is
-    /// LT, bit 31 (0x80) RT. Bits 0-13 are kept as read.
+    /// LT, bit 31 (0x80) RT. Bits 1-13 are kept as read.
     public static let flags = 52
+    /// Flag word bit 0: the triggers are swapped, with bytes 17 and 18 at 0.
+    public static let swapTriggers: UInt32 = 0x01
 
     /// The page the Accessories app writes when restoring a profile to default.
     public static let defaultPage: [UInt8] = [UInt8](hexString:
@@ -261,8 +268,11 @@ public enum MappingLayout {
 public enum CurvesLayout {
     /// Six bytes per axis: three (x, y) control points. Axis order LX, LY, RX, RY.
     public static let curveOffsets = [1, 7, 13, 19]
-    /// Bit 0 inverts the left stick Y axis, bit 1 the right stick Y axis.
-    public static let inversion = 27
+    /// Bit 0 inverts the left stick Y axis, bit 1 the right stick Y axis,
+    /// bit 2 swaps the sticks' X axes and bit 3 their Y axes.
+    public static let stickFlags = 27
+    /// Both swap bits: the Accessories app's one Swap sticks setting.
+    public static let swapSticks: UInt8 = 0x0C
 
     public static let defaultPage: [UInt8] = [UInt8](hexString:
         "11 2b 2b 7f 7f bf bf 2b 2b 7f 7f bf bf 2b 2b 7f 7f bf bf 2b 2b 7f 7f bf bf 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00")!
