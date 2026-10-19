@@ -29,6 +29,8 @@ enum DebugSnapshots {
         profile.setAssignment(.button(.rightBumper), for: .paddleUpperRight, shift: false)
         profile.setAssignment(.shift, for: .paddleLowerLeft, shift: false)
         profile.setAssignment(.button(.a), for: .y, shift: false)
+        profile.setAssignment(.button(.leftTrigger), for: .paddleLowerRight, shift: false)
+        profile.setAssignment(.key(KeyCombination(KeyboardKey(usage: 0x09), modifiers: [.control, .shift])), for: .rightTrigger, shift: false)
         profile.leftStick.curve = CurvePreset.aggressive.curve
         profile.light.brightness = 70
         profile.leftTrigger = TriggerSettings(range: 0xAB, deadZone: 0x1A)
@@ -84,7 +86,9 @@ enum DebugSnapshots {
             model.draft = unmapped
             render("editor-unmapped", size: CGSize(width: 1180, height: 900), ProfileEditorView())
         }
-        render("assignment-picker", size: CGSize(width: 260, height: 520), ZStack { CanvasBackground(); AssignmentPicker(control: .a, shiftLayer: false, current: .disabled) { _ in } })
+        render("assignment-picker", size: CGSize(width: 280, height: 660), ZStack { CanvasBackground(); AssignmentPicker(control: .a, shiftLayer: false, current: .disabled) { _ in } })
+        let key = Assignment.key(KeyCombination(KeyboardKey(usage: 0x2C), modifiers: [.control, .alt]))
+        render("assignment-picker-trigger-key", size: CGSize(width: 280, height: 600), ZStack { CanvasBackground(); AssignmentPicker(control: .leftTrigger, shiftLayer: false, current: key) { _ in } })
         exit(0)
     }
 }

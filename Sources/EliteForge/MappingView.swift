@@ -144,6 +144,7 @@ struct MappingView: View {
         case .shift: return "Shift"
         case .button(let button): return "→ \(button.shortLabel)"
         case .key(let key): return "⌨ \(key.label)"
+        case .code: return assignment.label
         }
     }
 
@@ -183,7 +184,11 @@ struct MappingView: View {
                 .popover(isPresented: $pickerOpen, arrowEdge: .top) {
                     AssignmentPicker(control: control, shiftLayer: shiftLayer, current: current) { value in
                         model.updateDraft { $0.setAssignment(value, for: control, shift: shiftLayer) }
-                        pickerOpen = false
+                        // A key keeps the picker open so its modifiers can be set.
+                        guard case .key = value else {
+                            pickerOpen = false
+                            return
+                        }
                     }
                 }
             }
@@ -214,29 +219,63 @@ struct AssignmentPicker: View {
                 .font(.headline)
                 .padding(.horizontal, 10)
                 .padding(.bottom, 6)
-            if control.isTrigger {
-                row("Default (trigger)", .standard)
-                Menu(keyMenuLabel) {
-                    ForEach(KeyboardKey.all) { key in
-                        Button(key.label) { choose(.key(key)) }
-                    }
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-            } else {
-                row(defaultLabel, .standard)
+            // A trigger's byte is 0 for "keep the trigger", so it can't be unmapped.
+            row(defaultLabel, .standard)
+            if !control.isTrigger {
                 row("Unmapped", .disabled)
                 if !shiftLayer {
                     row("Shift", .shift)
                 }
-                Divider().padding(.vertical, 4)
-                ForEach(GamepadButton.allCases) { button in
-                    row(button.label, .button(button))
-                }
             }
+            Divider().padding(.vertical, 4)
+            ForEach(control.targets) { button in
+                row(button.label, .button(button))
+            }
+            Divider().padding(.vertical, 4)
+            keyboard
         }
         .padding(10)
-        .frame(width: 240)
+        .frame(width: 260)
+    }
+
+    /// A key from the menu, then the modifiers sent with it.
+    private var keyboard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Menu(currentKey.map { "Key: \($0.key.label)" } ?? "Keyboard key") {
+                ForEach(KeyboardKey.all) { key in
+                    Button(key.label) { choose(.key(KeyCombination(key, modifiers: currentKey?.modifiers ?? []))) }
+                }
+            }
+            if let key = currentKey {
+                HStack(spacing: 6) {
+                    ForEach(KeyModifiers.named, id: \.1) { modifier, name in
+                        let on = key.modifiers.contains(modifier)
+                        Button(name) {
+                            var changed = key
+                            changed.modifiers.formSymmetricDifference(modifier)
+                            choose(.key(changed))
+                        }
+                        .font(.callout)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .foregroundStyle(on ? Color.white : .primary)
+                        .background(on ? AnyShapeStyle(Color.xbox.gradient) : AnyShapeStyle(Color.white.opacity(0.06)), in: Capsule())
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(on ? .isSelected : [])
+                    }
+                }
+            }
+            Text("Keys work on Xbox and Windows. macOS ignores them.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+    }
+
+    private var currentKey: KeyCombination? {
+        if case .key(let key) = current { return key }
+        return nil
     }
 
     private func row(_ title: String, _ value: Assignment) -> some View {
@@ -258,12 +297,8 @@ struct AssignmentPicker: View {
         .buttonStyle(.plain)
     }
 
-    private var keyMenuLabel: String {
-        if case .key = current { return current.label }
-        return "Keyboard key"
-    }
-
     private var defaultLabel: String {
+        if control.isTrigger { return "Default (trigger)" }
         if control.isPaddle, let button = control.standardOutput { return "Default (\(button.label))" }
         return "Default"
     }

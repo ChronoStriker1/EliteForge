@@ -18,14 +18,19 @@ final class LegacyFileTests: XCTestCase {
         XCTAssertEqual([profile.rightTrigger.range, profile.rightTrigger.deadZone], [1, 0], "range 0 was on/off; the nearest pair the firmware keeps")
         XCTAssertEqual(profile.buttons[.paddleUpperRight], .button(.rightBumper))
         XCTAssertEqual(profile.shiftControl, .paddleLowerLeft)
-        XCTAssertEqual(profile.buttons[.rightTrigger], .key(KeyboardKey(usage: 0x09)))
-        XCTAssertEqual(profile.shiftButtons[.leftTrigger], .key(KeyboardKey(usage: 0x2C)))
+        XCTAssertEqual(profile.buttons[.rightTrigger], .key(KeyCombination(KeyboardKey(usage: 0x09))))
+        XCTAssertEqual(profile.shiftButtons[.leftTrigger], .key(KeyCombination(KeyboardKey(usage: 0x2C))))
         XCTAssertEqual(profile.shiftButtons[.a], .button(.y))
         XCTAssertTrue(profile.rightStick.invertY)
         XCTAssertEqual(profile.leftStick.deadZone, 28)
         XCTAssertNil(profile.leftStick.preset, "the old approximate Fast start is a custom curve now")
         XCTAssertEqual(profile.light, LightSettings(brightness: 70, color: RGBColor(red: 0xFF, green: 0x6D, blue: 0x20)))
         XCTAssertTrue(profile.basePages.isValid)
+
+        // Each trigger key sets its own flag; earlier builds set RT's for both.
+        let pages = ProfileCodec.encode(profile, format: .v1_1)
+        XCTAssertEqual([pages.normalMapping[18]] + pages.normalMapping[52...55], [0x09, 0, 0, 0, 0x80])
+        XCTAssertEqual([pages.shiftMapping[17]] + pages.shiftMapping[52...55], [0x2C, 0, 0, 0, 0x40])
 
         // Saved again, it keeps everything it had.
         let again = try JSONDecoder().decode(EliteProfile.self, from: try JSONEncoder().encode(profile))

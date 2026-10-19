@@ -1,0 +1,97 @@
+import XCTest
+@testable import EliteKit
+
+/// Expected bytes come from the layout in docs/protocol.md: input byte n
+/// (1-18) holds a code or a HID usage, its keyboard flag is bit 14 + (n - 1)
+/// of the u32 LE at 52-55, and its modifiers are the nibble at
+/// 19 + (n - 1) / 2, low for the first input of the pair.
+final class MappingPageTests: XCTestCase {
+    func testKeyboardTriggerCaptureIsRTToFWithNoModifiers() {
+        let page = MappingPage(Captured.rightTriggerF)
+        XCTAssertEqual(page.assignments, [.rightTrigger: .key(KeyCombination(KeyboardKey(usage: 0x09)))])
+        XCTAssertEqual(page.bytes, Captured.rightTriggerF)
+    }
+
+    func testKeysWithModifiersOnPaddlesAndButtons() {
+        var expected = Captured.restoredDefault
+        expected[1] = 0x04 // P1: A
+        expected[2] = 0x2C // P2: Space
+        expected[5] = 0x28 // A: Return
+        expected[6] = 0x29 // B: Escape
+        expected[19] = 0x43 // P1 Ctrl+Shift in the low nibble, P2 Alt in the high
+        expected[21] = 0x80 // A none in the low nibble, B Win in the high
+        expected[53] = 0xC0 // bits 14 (P1) and 15 (P2)
+        expected[54] = 0x0C // bits 18 (A) and 19 (B)
+
+        var page = MappingPage(Captured.restoredDefault)
+        page.assignments = [
+            .paddleUpperRight: .key(KeyCombination(KeyboardKey(usage: 0x04), modifiers: [.control, .shift])),
+            .paddleLowerRight: .key(KeyCombination(KeyboardKey(usage: 0x2C), modifiers: .alt)),
+            .a: .key(KeyCombination(KeyboardKey(usage: 0x28))),
+            .b: .key(KeyCombination(KeyboardKey(usage: 0x29), modifiers: .windows)),
+        ]
+        XCTAssertEqual(page.bytes, expected)
+        XCTAssertEqual(MappingPage(expected).assignments, page.assignments)
+    }
+
+    func testKeysWithModifiersOnBothTriggers() {
+        var expected = Captured.restoredDefault
+        expected[17] = 0x2C // LT: Space
+        expected[18] = 0x09 // RT: F
+        expected[27] = 0x21 // LT Ctrl in the low nibble, RT Shift in the high
+        expected[55] = 0xC0 // bits 30 (LT) and 31 (RT)
+
+        var page = MappingPage(Captured.restoredDefault)
+        page.assignments = [
+            .leftTrigger: .key(KeyCombination(KeyboardKey(usage: 0x2C), modifiers: .control)),
+            .rightTrigger: .key(KeyCombination(KeyboardKey(usage: 0x09), modifiers: .shift)),
+        ]
+        XCTAssertEqual(page.bytes, expected)
+        XCTAssertEqual(MappingPage(expected).assignments, page.assignments)
+    }
+
+    func testClearingAKeyKeepsTheFlagBitsTheElite2DoesntUse() {
+        var base = Captured.restoredDefault
+        base[1] = 0x04
+        base[19] = 0x53 // P1 Ctrl+Shift, and a nibble for P2, which isn't a key; the app writes 0 there
+        base[52] = 0x3E // bits 1-5, the Adaptive Controller's mouse settings
+        base[53] = 0x7F // bits 8-13 and P1's flag
+        var page = MappingPage(base)
+        XCTAssertEqual(page.assignments[.paddleUpperRight], .key(KeyCombination(KeyboardKey(usage: 0x04), modifiers: [.control, .shift])))
+        page.assignments[.paddleUpperRight] = nil
+
+        var expected = base
+        expected[1] = 0x05 // the paddle's default, B
+        expected[19] = 0x00
+        expected[53] = 0x3F
+        XCTAssertEqual(page.bytes, expected)
+    }
+
+    func testTriggersAsTargetsAndAsInputs() {
+        var expected = Captured.restoredDefault
+        expected[5] = 0x10 // A gives LT
+        expected[14] = 0x11 // RB gives RT
+        expected[17] = 0x04 // LT gives A
+        var page = MappingPage(Captured.restoredDefault)
+        page.assignments = [.a: .button(.leftTrigger), .rightBumper: .button(.rightTrigger), .leftTrigger: .button(.a)]
+        XCTAssertEqual(page.bytes, expected)
+        XCTAssertEqual(MappingPage(expected).assignments, page.assignments)
+
+        XCTAssertEqual(RemappableControl.a.targets, GamepadButton.allCases)
+        XCTAssertEqual(GamepadButton.allCases.count, 14)
+        for trigger in RemappableControl.triggers {
+            XCTAssertEqual(trigger.targets.count, 12, "a trigger gets the other trigger only by swapping them")
+            XCTAssertFalse(trigger.targets.contains(.leftTrigger) || trigger.targets.contains(.rightTrigger))
+        }
+    }
+
+    func testOutputsTheAppDoesntOfferAreKept() {
+        var bytes = Captured.restoredDefault
+        bytes[3] = 0x1A // P3 gives the P1 paddle
+        bytes[7] = 0x12 // X gives left stick up
+        bytes[9] = 0x02 // D-pad up gives Menu
+        let page = MappingPage(bytes)
+        XCTAssertEqual(page.assignments, [.paddleUpperLeft: .code(0x1A), .x: .code(0x12), .dpadUp: .code(0x02)])
+        XCTAssertEqual(page.bytes, bytes)
+    }
+}

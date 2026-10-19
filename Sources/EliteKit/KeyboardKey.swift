@@ -41,3 +41,52 @@ public struct KeyboardKey: Hashable, Codable, Sendable, Identifiable {
         return table
     }()
 }
+
+/// Keyboard modifiers held with a key. The controller ORs them into the HID
+/// report's modifier byte (firmware 0x1004ed10), so the bits follow it. The
+/// values are inferred from the order of the Accessories app's modifier
+/// names and the HID convention, not verified on hardware.
+public struct KeyModifiers: OptionSet, Hashable, Codable, Sendable {
+    public let rawValue: UInt8
+    public init(rawValue: UInt8) { self.rawValue = rawValue }
+
+    public static let control = KeyModifiers(rawValue: 0x01)
+    public static let shift = KeyModifiers(rawValue: 0x02)
+    public static let alt = KeyModifiers(rawValue: 0x04)
+    public static let windows = KeyModifiers(rawValue: 0x08)
+
+    /// Each modifier with its name, in the order labels list them.
+    public static let named: [(KeyModifiers, String)] = [(.control, "Ctrl"), (.shift, "Shift"), (.alt, "Alt"), (.windows, "Win")]
+}
+
+/// A key and the modifiers sent with it.
+public struct KeyCombination: Hashable, Codable, Sendable {
+    public var key: KeyboardKey
+    public var modifiers: KeyModifiers
+
+    public init(_ key: KeyboardKey, modifiers: KeyModifiers = []) {
+        self.key = key
+        self.modifiers = modifiers
+    }
+
+    /// "Ctrl+Shift+F".
+    public var label: String {
+        (KeyModifiers.named.filter { modifiers.contains($0.0) }.map(\.1) + [key.label]).joined(separator: "+")
+    }
+
+    // Stored flat, as {"usage": 9, "modifiers": 3}, so setups saved before
+    // modifiers, which hold just the key, still load.
+    private enum CodingKeys: String, CodingKey { case usage, modifiers }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        key = KeyboardKey(usage: try container.decode(UInt8.self, forKey: .usage))
+        modifiers = try container.decodeIfPresent(KeyModifiers.self, forKey: .modifiers) ?? []
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(key.usage, forKey: .usage)
+        try container.encode(modifiers, forKey: .modifiers)
+    }
+}

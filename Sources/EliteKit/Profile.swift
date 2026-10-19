@@ -465,13 +465,14 @@ public struct EliteProfile: Hashable, Codable, Sendable, Identifiable {
             && vibration == VibrationSettings() && light == LightSettings()
     }
 
-    /// The gamepad button `control` produces in a layer. Triggers, unmapped
-    /// and shift controls, and keyboard keys produce none.
+    /// The gamepad output `control` produces in a layer. Triggers left as
+    /// they are, unmapped and shift controls, keyboard keys and other output
+    /// codes produce none.
     public func output(of control: RemappableControl, shift: Bool) -> GamepadButton? {
         switch assignment(for: control, shift: shift) {
         case .standard: control.standardOutput
         case .button(let button): button
-        case .disabled, .shift, .key: nil
+        case .disabled, .shift, .key, .code: nil
         }
     }
 

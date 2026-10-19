@@ -1,7 +1,9 @@
 import Foundation
 
-/// Gamepad buttons as encoded in a profile mapping page. These codes differ
-/// from the bit positions in input reports.
+/// What a control can be remapped to, as encoded in a profile mapping page:
+/// the 12 buttons and the two triggers, which the firmware pulls all the
+/// way. These are the 14 the Accessories app offers. The codes differ from
+/// the bit positions in input reports.
 public enum GamepadButton: UInt8, CaseIterable, Codable, Sendable, Identifiable {
     case a = 0x04
     case b = 0x05
@@ -15,6 +17,8 @@ public enum GamepadButton: UInt8, CaseIterable, Codable, Sendable, Identifiable 
     case rightBumper = 0x0D
     case leftStick = 0x0E
     case rightStick = 0x0F
+    case leftTrigger = 0x10
+    case rightTrigger = 0x11
 
     public var id: UInt8 { rawValue }
 
@@ -32,6 +36,8 @@ public enum GamepadButton: UInt8, CaseIterable, Codable, Sendable, Identifiable 
         case .rightBumper: "Right bumper"
         case .leftStick: "Left stick click"
         case .rightStick: "Right stick click"
+        case .leftTrigger: "Left trigger"
+        case .rightTrigger: "Right trigger"
         }
     }
 
@@ -49,6 +55,8 @@ public enum GamepadButton: UInt8, CaseIterable, Codable, Sendable, Identifiable 
         case .rightBumper: "RB"
         case .leftStick: "LS"
         case .rightStick: "RS"
+        case .leftTrigger: "LT"
+        case .rightTrigger: "RT"
         }
     }
 }
@@ -146,6 +154,13 @@ public enum RemappableControl: String, CaseIterable, Codable, CodingKeyRepresent
 
     public var isTrigger: Bool { self == .leftTrigger || self == .rightTrigger }
 
+    /// What the Accessories app lets this control send. A trigger's own
+    /// output is its default, and it can only get the other trigger's by
+    /// swapping the triggers.
+    public var targets: [GamepadButton] {
+        isTrigger ? GamepadButton.allCases.filter { $0 != .leftTrigger && $0 != .rightTrigger } : GamepadButton.allCases
+    }
+
     /// Byte offset of this control's output in the 56-byte mapping page.
     public var mappingOffset: Int {
         switch self {
@@ -186,9 +201,14 @@ public enum Assignment: Hashable, Codable, Sendable {
     case shift
     /// The control acts as another gamepad button.
     case button(GamepadButton)
-    /// The control sends a keyboard key (HID usage). Only works on Xbox and
-    /// Windows, where the system driver turns it into a key press.
-    case key(KeyboardKey)
+    /// The control sends a keyboard key (HID usage) with modifiers. Only
+    /// works on Xbox and Windows, where the system driver turns it into a
+    /// key press.
+    case key(KeyCombination)
+    /// An output the Accessories app doesn't offer on the Elite 2, such as
+    /// Menu (0x02), a stick direction (0x12-0x19) or a paddle (0x1A-0x1D),
+    /// kept as read.
+    case code(UInt8)
 
     public var label: String {
         switch self {
@@ -197,6 +217,7 @@ public enum Assignment: Hashable, Codable, Sendable {
         case .shift: "Shift"
         case .button(let button): button.label
         case .key(let key): "Key: \(key.label)"
+        case .code(let code): String(format: "Output 0x%02X", code)
         }
     }
 }
@@ -216,14 +237,19 @@ public enum MappingLayout {
     public static let codeDisabled: UInt8 = 0x00
     public static let codeShift: UInt8 = 0x01
 
+    /// Keyboard modifier nibbles: input byte n's at byte 19 + (n - 1) / 2,
+    /// the odd byte's input in the low nibble.
+    public static let modifiers = 19
     public static let rumbleIntensity = 28 // [weak, strong, right trigger, left trigger], 0-100
     /// (max, min) pairs per hair trigger lock position (full, half, short): LT 32-37, RT 38-43.
     public static let triggerPairs = 32
     public static let brightness = 44
     public static let colorFlag = 45 // 0xFF = default white, 0x00 = custom colour
     public static let color = 46 // R, G, B
-    public static let keyboardFlags = 55 // 0x80 when a trigger sends a keyboard key
-    public static let keyboardFlagValue: UInt8 = 0x80
+    /// A u32 LE flag word. Bit 14 + (n - 1) is set when input byte n holds
+    /// a HID keyboard usage instead of a code: bit 30 (0x40 in byte 55) is
+    /// LT, bit 31 (0x80) RT. Bits 0-13 are kept as read.
+    public static let flags = 52
 
     /// The page the Accessories app writes when restoring a profile to default.
     public static let defaultPage: [UInt8] = [UInt8](hexString:

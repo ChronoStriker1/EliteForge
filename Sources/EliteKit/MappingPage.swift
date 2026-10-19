@@ -16,12 +16,16 @@ public struct MappingPage: Hashable, Sendable {
     public init(_ bytes: [UInt8]) {
         precondition(bytes.count == MappingLayout.size)
         base = bytes
-        let keyboard = bytes[MappingLayout.keyboardFlags] & MappingLayout.keyboardFlagValue != 0
+        let flags = Self.flags(bytes)
         var assignments: [RemappableControl: Assignment] = [:]
         for control in RemappableControl.allCases {
             let code = bytes[control.mappingOffset]
-            if code == Self.standardCode(control) { continue }
-            assignments[control] = control.isTrigger && keyboard ? .key(KeyboardKey(usage: code)) : Self.assignment(forCode: code)
+            if flags & Self.keyboardFlag(control) != 0 {
+                let (index, shift) = Self.modifierNibble(control)
+                assignments[control] = .key(KeyCombination(KeyboardKey(usage: code), modifiers: KeyModifiers(rawValue: bytes[index] >> shift & 0x0F)))
+            } else if code != Self.standardCode(control) {
+                assignments[control] = Self.assignment(forCode: code)
+            }
         }
         self.assignments = assignments
         let rumble = MappingLayout.rumbleIntensity
@@ -41,17 +45,21 @@ public struct MappingPage: Hashable, Sendable {
 
     public var bytes: [UInt8] {
         var page = base
-        var usesKeyboard = false
+        var flags = Self.flags(base)
         for control in RemappableControl.allCases {
-            let assignment = assignments[control] ?? .standard
-            if control.isTrigger, case .key = assignment { usesKeyboard = true }
-            page[control.mappingOffset] = Self.code(for: assignment, control: control)
+            var modifiers = KeyModifiers()
+            if case .key(let key) = assignments[control] {
+                page[control.mappingOffset] = key.key.usage
+                flags |= Self.keyboardFlag(control)
+                modifiers = key.modifiers
+            } else {
+                page[control.mappingOffset] = Self.code(for: assignments[control] ?? .standard, control: control)
+                flags &= ~Self.keyboardFlag(control)
+            }
+            let (index, shift) = Self.modifierNibble(control)
+            page[index] = page[index] & ~(0x0F << shift) | (modifiers.rawValue & 0x0F) << shift
         }
-        if usesKeyboard {
-            page[MappingLayout.keyboardFlags] |= MappingLayout.keyboardFlagValue
-        } else {
-            page[MappingLayout.keyboardFlags] &= ~MappingLayout.keyboardFlagValue
-        }
+        page.replaceSubrange(MappingLayout.flags..<MappingLayout.flags + 4, with: (0..<4).map { UInt8(truncatingIfNeeded: flags >> ($0 * 8)) })
 
         let rumble = MappingLayout.rumbleIntensity
         page[rumble] = min(vibration.rightGrip, 100)
@@ -79,6 +87,22 @@ public struct MappingPage: Hashable, Sendable {
         return page
     }
 
+    private static func flags(_ bytes: [UInt8]) -> UInt32 {
+        (0..<4).reduce(0) { $0 | UInt32(bytes[MappingLayout.flags + $1]) << ($1 * 8) }
+    }
+
+    /// Input byte n's keyboard flag is bit 14 + (n - 1) of the flag word.
+    private static func keyboardFlag(_ control: RemappableControl) -> UInt32 {
+        1 << (14 + control.mappingOffset - 1)
+    }
+
+    /// The byte and bit shift of input byte n's modifier nibble: two inputs
+    /// per byte from 19, the first of the pair in the low nibble.
+    private static func modifierNibble(_ control: RemappableControl) -> (index: Int, shift: UInt8) {
+        let input = control.mappingOffset - 1
+        return (MappingLayout.modifiers + input / 2, input % 2 == 0 ? 0 : 4)
+    }
+
     private static func standardCode(_ control: RemappableControl) -> UInt8 {
         control.standardOutput?.rawValue ?? 0x00
     }
@@ -89,7 +113,7 @@ public struct MappingPage: Hashable, Sendable {
         case MappingLayout.codeShift: return .shift
         default:
             if let button = GamepadButton(rawValue: code) { return .button(button) }
-            return .key(KeyboardKey(usage: code))
+            return .code(code)
         }
     }
 
@@ -99,7 +123,8 @@ public struct MappingPage: Hashable, Sendable {
         case .disabled: return MappingLayout.codeDisabled
         case .shift: return MappingLayout.codeShift
         case .button(let button): return button.rawValue
-        case .key(let key): return key.usage
+        case .code(let code): return code
+        case .key(let key): return key.key.usage
         }
     }
 }

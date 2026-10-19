@@ -182,7 +182,7 @@ final class CodecTests: XCTestCase {
         XCTAssertEqual(shift.shiftButtons[.paddleUpperRight], .shift)
 
         let key = try ProfileCodec.decode(Captured.slot(normal: Captured.rightTriggerF), name: "x")
-        XCTAssertEqual(key.buttons[.rightTrigger], .key(KeyboardKey(usage: 0x09)))
+        XCTAssertEqual(key.buttons[.rightTrigger], .key(KeyCombination(KeyboardKey(usage: 0x09))))
         XCTAssertEqual(KeyboardKey(usage: 0x09).label, "F")
     }
 
@@ -209,7 +209,7 @@ final class CodecTests: XCTestCase {
     func testEditsProduceAccessoriesBytes() throws {
         // Start from default and make the same edits as the Windows captures.
         var profile = try ProfileCodec.decode(.factoryDefault, name: "x")
-        profile.setAssignment(.key(KeyboardKey(usage: 0x09)), for: .rightTrigger, shift: false)
+        profile.setAssignment(.key(KeyCombination(KeyboardKey(usage: 0x09))), for: .rightTrigger, shift: false)
         XCTAssertEqual(ProfileCodec.encode(profile, format: .v1_1).normalMapping, Captured.rightTriggerF)
         XCTAssertEqual(ProfileCodec.encode(profile, format: .v1_1).shiftMapping, Captured.restoredDefault)
 
@@ -438,7 +438,10 @@ final class CodecTests: XCTestCase {
     func testProfileJSONRoundTrip() throws {
         var profile = EliteProfile.factoryDefault(name: "FPS")
         profile.setAssignment(.button(.y), for: .paddleLowerRight, shift: false)
-        profile.setAssignment(.key(KeyboardKey(usage: 0x2C)), for: .leftTrigger, shift: true)
+        profile.setAssignment(.key(KeyCombination(KeyboardKey(usage: 0x2C))), for: .leftTrigger, shift: true)
+        profile.setAssignment(.key(KeyCombination(KeyboardKey(usage: 0x09), modifiers: [.control, .alt])), for: .b, shift: false)
+        profile.setAssignment(.button(.rightTrigger), for: .x, shift: false)
+        profile.setAssignment(.code(0x12), for: .y, shift: true)
         profile.light.color = RGBColor(red: 1, green: 2, blue: 3)
         let data = try JSONEncoder().encode(profile)
         XCTAssertEqual(try JSONDecoder().decode(EliteProfile.self, from: data), profile)
@@ -496,7 +499,7 @@ final class CodecTests: XCTestCase {
         XCTAssertEqual(profile.unmappedEssentialButtons, [])
 
         profile.setAssignment(.shift, for: .b, shift: false)
-        profile.setAssignment(.key(KeyboardKey(usage: 0x05)), for: .paddleUpperRight, shift: false)
+        profile.setAssignment(.key(KeyCombination(KeyboardKey(usage: 0x05))), for: .paddleUpperRight, shift: false)
         XCTAssertEqual(profile.unmappedEssentialButtons, [.b])
         profile.setAssignment(.standard, for: .y, shift: false)
         XCTAssertEqual(profile.unmappedEssentialButtons, [.a, .b])
