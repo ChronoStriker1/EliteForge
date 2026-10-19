@@ -21,6 +21,7 @@ let package = Package(
         .executableTarget(name: "forgectl", dependencies: ["EliteKit", "EliteUSB", "EliteIPC"]),
         .executableTarget(name: "EliteForge", dependencies: ["EliteKit", "EliteIPC"]),
         .testTarget(name: "EliteKitTests", dependencies: ["EliteKit"]),
+        .testTarget(name: "EliteIPCTests", dependencies: ["EliteIPC", "EliteKit"]),
     ],
     swiftLanguageModes: [.v5]
 )

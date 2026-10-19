@@ -55,6 +55,18 @@ public enum HelperRequest: Codable, Sendable {
     case setInitSequence(Bool)
 }
 
+extension HelperRequest {
+    /// Captures the controller, then asks for the firmware it reported. The
+    /// helper learns the firmware from the HELLO it waits for while
+    /// capturing, so a helper that has just started knows it only after the
+    /// capture. Every profile write chooses its page format from this.
+    public static func capturedFirmware(using perform: (HelperRequest) throws -> HelperReply) throws -> String? {
+        _ = try perform(.attach)
+        guard case .status(let status) = try perform(.status) else { return nil }
+        return status.info?.firmware
+    }
+}
+
 public enum HelperReply: Codable, Sendable {
     case ok
     case status(ControllerStatus)

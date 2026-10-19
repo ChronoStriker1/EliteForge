@@ -160,15 +160,6 @@ func slotArgument(_ args: [String], _ index: Int) -> Int {
     return slot
 }
 
-/// The connected controller's firmware, which decides the page format. The
-/// helper learns it from the HELLO it waits for while capturing, so a helper
-/// that has just started knows it only after the attach.
-func connectedFirmware(_ backend: Backend) throws -> String? {
-    _ = try backend.perform(.attach)
-    guard case .status(let status) = try backend.perform(.status) else { return nil }
-    return status.info?.firmware
-}
-
 func describe(_ profile: EliteProfile, pages: SlotPages) -> String {
     let version = pages.normalMapping[0]
     var lines = [String(format: "Page format %d.%d, curves page %d bytes", version >> 4, version & 0x0F, pages.normalCurves.count)]
@@ -292,16 +283,16 @@ func run() throws {
         let pages: SlotPages
         if command == "write" {
             let profile = try JSONDecoder().decode(EliteProfile.self, from: data)
-            pages = ProfileCodec.encode(profile, format: try ProfileFormat.forWriting(firmware: connectedFirmware(backend)))
+            pages = ProfileCodec.encode(profile, format: try ProfileFormat.forWriting(firmware: HelperRequest.capturedFirmware(using: backend.perform)))
         } else {
             pages = try JSONDecoder().decode(SlotPages.self, from: data)
-            try pages.checkWritable(firmware: connectedFirmware(backend))
+            try pages.checkWritable(firmware: HelperRequest.capturedFirmware(using: backend.perform))
         }
         _ = try backend.perform(.writeSlot(slot, pages, serial: nil))
         print("wrote profile \(slot)")
     case "reset":
         let slot = slotArgument(args, 1)
-        _ = try backend.perform(.writeSlot(slot, ProfileCodec.encode(.factoryDefault(name: "Profile \(slot)"), format: try ProfileFormat.forWriting(firmware: connectedFirmware(backend))), serial: nil))
+        _ = try backend.perform(.writeSlot(slot, ProfileCodec.encode(.factoryDefault(name: "Profile \(slot)"), format: try ProfileFormat.forWriting(firmware: HelperRequest.capturedFirmware(using: backend.perform))), serial: nil))
         print("profile \(slot) restored to defaults (\(StickSettings.recommended.deadZonePercent)% stick dead zone)")
     case "light":
         guard args.count > 1 else { fail("missing colour") }
