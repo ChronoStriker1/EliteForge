@@ -43,7 +43,7 @@ The build is ad-hoc signed. That's enough on the Mac that built it. To run it on
 
 ## Feature parity with the Xbox Accessories app
 
-Encodings marked "from the app's code" were read from the Accessories app (2506.2505.28001.0) and the Elite 2 firmware it bundles, as described in [docs/protocol.md](docs/protocol.md). They match the Windows captures where one exists, but haven't been tried on a controller yet.
+Encodings marked "from the app's code" were read from the Accessories app (2506.2505.28001.0) and the Elite 2 firmware it bundles, as described in [docs/protocol.md](docs/protocol.md). They match the Windows captures where one exists. Rows that say so were also checked on a controller with firmware 5.22.16.0.
 
 | Feature | Status |
 |---|---|
@@ -54,17 +54,17 @@ Encodings marked "from the app's code" were read from the Accessories app (2506.
 | LT and RT as remap targets, and triggers remapped to buttons | Done, from the app's code. The left trigger can't be mapped to the right one except through Swap triggers, as in the app. |
 | Shift button and a second layer of mappings | Done (encoding from Windows captures) |
 | Keyboard keys on any button, paddle or trigger | Done. Trigger keys match a Windows capture; buttons, paddles and the Ctrl, Shift, Alt and Win modifiers are from the app's code. The modifier bit values are inferred. Works on Xbox and Windows; macOS ignores the keys. |
-| Sticky (toggle) inputs | Done for the 16 non-trigger inputs, from the app's code. The firmware doesn't toggle the triggers. Needs firmware 5.21.3242.0 or later. |
+| Sticky (toggle) inputs | Done for the 16 non-trigger inputs, from the app's code, and verified on hardware with X. The firmware doesn't toggle the triggers. Needs firmware 5.21.3242.0 or later. |
 | Press and hold a button to remap it | Done. Works while Profile 0 (Default) is active. |
 | Warning when A or B isn't mapped | Done |
 | Invert Y per stick | Done (encoding from captures) |
-| Swap sticks, swap triggers | Done, from the app's code |
+| Swap sticks, swap triggers | Done, from the app's code, and verified on hardware |
 | Stick response curves with draggable points | Done. The preview places the points the way the firmware does. |
 | Curve presets Default, Slow start, Fast start, Instant, Smooth | Done with the app's exact values. Which name goes with which values is inferred from the order of the app's constants. |
 | Stick dead zones | Done, set through the curve's first point (see docs/protocol.md), and verified on hardware. The stick view draws the dead zone and shows the physical stick position next to the output after the dead zone and curve. |
-| Trigger range and inner dead zone | Done: a min and max per trigger, written for the full and half hair trigger lock positions as the app does. A 30% range was verified on hardware; the inner dead zone is from the app's code. "Same range for both triggers" keeps them linked. |
+| Trigger range and inner dead zone | Done: a min and max per trigger, written for the full and half hair trigger lock positions as the app does. A 30% range was verified on hardware, and so was reaching full output with a min and max set, swapped or not; the inner dead zone's start point is from the app's code. "Same range for both triggers" keeps them linked. |
 | Hair trigger locks | Shown read-only, since they're physical switches. Trigger calibration reads them to check each lock position. |
-| Vibration strength per motor | Done |
+| Vibration strength per motor | Done, motor order verified on hardware |
 | Xbox button colour and brightness | Done, with a live preview on the controller and a `#RRGGBB` field. Stored colour verified on hardware. |
 | Default profile light | EliteForge only: the Default profile can't store a colour, so while EliteForge holds the controller over USB the helper shows a chosen colour whenever Default is active, using the same live command as the colour preview. It's white again once released or unplugged. |
 | Controller name | Done |
@@ -76,7 +76,7 @@ Encodings marked "from the app's code" were read from the Accessories app (2506.
 | Turn the controller off | Not yet: the Accessories app hands this to Windows, so its bytes aren't in the app. |
 | Firmware updates | Not planned. Use the Xbox app on Windows or an Xbox console. |
 
-Still unverified on hardware: which rumble byte drives which motor (the app's names are the mirror of EliteForge's current order), the keyboard modifier bits, and the preset names. A short test with the controller plugged into a Mac settles each one.
+Still unverified on hardware: the keyboard modifier bits, which need the controller on Windows or Xbox because macOS ignores its keyboard reports, and the preset names.
 
 ## Command line
 

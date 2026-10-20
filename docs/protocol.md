@@ -148,7 +148,7 @@ Layout:
 | 9-16 | D-pad up/down/left/right, LB, RB, LS, RS outputs | capture |
 | 17, 18 | LT, RT: 0x00 keeps the analog trigger, otherwise a code from the table above or a HID keyboard usage when the trigger's keyboard flag is set | capture, app code 0x180e9aeac |
 | 19-27 | keyboard modifier nibbles, one byte per pair of inputs: 19 = P1 and P2, 20 = P3 and P4, 21 = A and B, 22 = X and Y, 23 = D-pad up and down, 24 = left and right, 25 = LB and RB, 26 = LS and RS, 27 = LT and RT. The first input of the pair is the low nibble. | app code 0x180c20bf4 and 0x180c215cc, firmware 0x1004ec42 |
-| 28-31 | rumble scale 0-100: left grip, right grip, left trigger, right trigger in the app's own naming. This is the mirror image of upstream's order (right grip, left grip, RT, LT); one hardware test settles it. | app code 0x180e9d0b4 with the JSON names `LeftRumbleMotor`, `RightRumbleMotor`; upstream |
+| 28-31 | rumble scale 0-100: right grip, left grip, right trigger, left trigger. With 28 and 30 set to 0 and all four motors driven at 100, only the left grip and left trigger rumbled. The app's JSON names call byte 28 `LeftRumbleMotor`, the opposite of what the motors do. | hardware test 2026-10-20 (firmware 5.22.16.0), app code 0x180e9d0b4, upstream |
 | 32-33 | LT (max, min) for the hair trigger lock in the full travel position. Max is the travel at which the trigger reads full, min the travel below which it reads zero. 0xFF and 0x00 by default. | app code 0x180e9d0b4, firmware 0x1005078c, capture |
 | 34-35 | LT (max, min) for the half lock position. The app writes a copy of 32-33. | app code 0x180e9d0b4, firmware 0x1005078c |
 | 36-37 | LT (max, min) for the short lock position. The app writes 0, 0. | app code 0x180e9d0b4, firmware 0x1005078c |
@@ -174,7 +174,7 @@ Any of the 18 inputs can send a keyboard key. The input's byte holds the HID key
 
 ### Swap sticks and swap triggers
 
-Swap triggers is bit 0 of byte 52 with bytes 17 and 18 set to 0. The app sets it when LT is mapped to RT and RT to LT (app code 0x180e9aeac), and the firmware swaps the trigger index before applying the trigger ranges (firmware 0x100505da).
+Both swaps were verified on a controller (firmware 5.22.16.0). With the swap bits set, the physical LT reads as RT, and pushing the left stick up moves the reported right stick. Trigger ranges still reach 1023 with the triggers swapped. Swap triggers is bit 0 of byte 52 with bytes 17 and 18 set to 0. The app sets it when LT is mapped to RT and RT to LT (app code 0x180e9aeac), and the firmware swaps the trigger index before applying the trigger ranges (firmware 0x100505da).
 
 Swap sticks lives in the curves page: byte 27 bit 2 swaps the X axes and bit 3 swaps the Y axes between the sticks (app code 0x180e9fc08 with the JSON names `SwapThumbsticksXAxes` and `SwapThumbsticksYAxes`, firmware 0x10050594). The app's single swap toggle should set both, 0x0C. The stick clicks are not swapped; they are ordinary button mappings.
 
@@ -186,7 +186,7 @@ Swap sticks lives in the curves page: byte 27 bit 2 swaps the X axes and bit 3 s
 | 1-24 | LX, LY, RX, RY curves, six bytes each: three (x, y) points, 0-255. Linear is `2b 2b 7f 7f bf bf`. The app always writes point 1 as (0x2b, 0x2b) and takes points 2 and 3 from the user's two handles. | capture, app code 0x180e9fc08 |
 | 25-26 | one byte per stick that the firmware's own setting path calls rotation; the app writes 0 for the Elite 2 | firmware 0x1004f5dc, inferred |
 | 27 | bit 0 inverts left Y, bit 1 inverts right Y, bit 2 swaps the X axes, bit 3 swaps the Y axes, bits 4-5 left stick mode, bits 6-7 right stick mode | capture, app code 0x180e9fc08, firmware 0x10050594 and 0x1005074e |
-| 28-30 | sticky (toggle) inputs, one bit per input in mapping byte order: byte 28 bits 0-7 are P1, P2, P3, P4, A, B, X, Y; byte 29 bits 0-7 are D-pad up, down, left, right, LB, RB, LS, RS; byte 30 bits 0-1 are LT, RT. A set bit makes the input toggle its output. The app serializes all 18 bits, but the firmware applies the toggle only to the 16 inputs of mapping bytes 1-16: its toggle loop stops at 16 (0x1004fe34, the only caller of the toggle helper 0x10050b34) and the trigger bits of the input mask come straight from the range processing (0x1004e89e). The LT and RT bits are therefore written but not acted on by the firmware path traced. Written only in version 1.1. | app code 0x180e9fc08, firmware 0x1004f5dc, 0x1004fe34, 0x1004e89e |
+| 28-30 | sticky (toggle) inputs, verified on a controller with X (bit 6 of byte 28): one press latches it until the profile changes. One bit per input in mapping byte order: byte 28 bits 0-7 are P1, P2, P3, P4, A, B, X, Y; byte 29 bits 0-7 are D-pad up, down, left, right, LB, RB, LS, RS; byte 30 bits 0-1 are LT, RT. A set bit makes the input toggle its output. The app serializes all 18 bits, but the firmware applies the toggle only to the 16 inputs of mapping bytes 1-16: its toggle loop stops at 16 (0x1004fe34, the only caller of the toggle helper 0x10050b34) and the trigger bits of the input mask come straight from the range processing (0x1004e89e). The LT and RT bits are therefore written but not acted on by the firmware path traced. Written only in version 1.1. | app code 0x180e9fc08, firmware 0x1004f5dc, 0x1004fe34, 0x1004e89e |
 | 31-38 | output codes of the Adaptive Controller's eight extra inputs, 0 on the Elite 2 | app code 0x180c25984 |
 | 39-42 | modifier nibbles for those extra inputs, 0 on the Elite 2 | firmware 0x1004ec42 |
 
@@ -269,7 +269,6 @@ Recovered from the app and firmware code but not yet tested on hardware: the tri
 
 These still need a hardware test or a new Windows capture:
 
-- Which grip motor bytes 28 and 29 drive. The app names byte 28 the left rumble motor; upstream and EliteForge treat it as the right one. Setting one byte to 0 and rumbling settles it.
 - The bytes behind the app's Turn off controller button (a Windows USB capture while pressing it).
 - The meaning of byte 51 and of the short-lock pairs 36-37 and 42-43 beyond the firmware's on/off repair.
 - The three stick mode values in curves byte 27 bits 4-7, and whether the Elite 2 pages in the Accessories app ever offer sticky inputs, Menu and View (codes 0x02 and 0x03) or paddle outputs (0x1A-0x1D).
