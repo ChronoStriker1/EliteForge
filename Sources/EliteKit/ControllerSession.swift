@@ -65,6 +65,10 @@ public enum ControllerError: Error, LocalizedError, Equatable {
     /// The controller only accepts writes while its Default profile (slot 0) is active.
     case customProfileActive
     case differentController
+    /// The page format depends on the firmware, which the controller hasn't reported.
+    case firmwareUnknown
+    /// Raw pages laid out in another format than the firmware takes.
+    case wrongPageFormat(expected: ProfileFormat)
     case usb(String)
 
     public var errorDescription: String? {
@@ -77,6 +81,8 @@ public enum ControllerError: Error, LocalizedError, Equatable {
         case .invalidPages: "Profile pages have the wrong size."
         case .customProfileActive: "The controller only accepts changes while it's on Profile 0 (Default). Press the profile button until no profile light is on, then try again."
         case .differentController: "A different controller is connected now, so the change wasn't saved."
+        case .firmwareUnknown: "The controller hasn't reported its firmware version on this connection. The version decides how profiles are stored, so nothing was saved. Unplug the controller, plug it back in, and try again."
+        case .wrongPageFormat(let format): "These pages aren't in format \(format.label), the one this controller's firmware takes, so they weren't written."
         case .usb(let message): message
         }
     }
@@ -228,12 +234,15 @@ public final class ControllerSession: @unchecked Sendable {
         try vendorRequest([VendorCommand.initExtended, 0x00], what: "extended reports") { $0.first == VendorCommand.initExtended }
     }
 
-    public func readPage(_ page: UInt8, size: Int) throws -> [UInt8] {
+    /// Reads `size` bytes of a page. A reply of exactly `shorterSize` bytes is
+    /// a whole page too, such as a version 1.0 curves page.
+    public func readPage(_ page: UInt8, size: Int, shorterSize: Int? = nil) throws -> [UInt8] {
         let what = String(format: "read page 0x%02X", page)
         let reply = try vendorRequest([VendorCommand.readPage, page, UInt8(size)], what: what, accepting: [0x00, Self.statusActiveSlot]) {
             $0.count >= 4 && $0[0] == VendorCommand.readPage && $0[2] == page
         }
         let data = Array(reply.dropFirst(4))
+        if data.count == shorterSize { return data }
         guard data.count >= size else { throw ControllerError.timeout(what) }
         return Array(data.prefix(size))
     }
@@ -247,14 +256,20 @@ public final class ControllerSession: @unchecked Sendable {
 
     // MARK: Profiles
 
+    /// Curves pages are asked for at the 1.1 size. Firmware older than
+    /// 5.21.3242.0 keeps 1.0 pages of 28 bytes; how it answers that request
+    /// hasn't been seen, so a 28-byte reply is taken as a whole 1.0 page.
     public func readSlot(_ slot: Int) throws -> SlotPages {
         guard let pages = ProfilePages.addresses(slot: slot) else { throw ControllerError.invalidSlot(slot) }
+        func curves(_ page: UInt8) throws -> [UInt8] {
+            try readPage(page, size: ProfileFormat.v1_1.curvesSize, shorterSize: ProfileFormat.v1_0.curvesSize)
+        }
         return try exclusive {
             SlotPages(
                 normalMapping: try readPage(pages.normalMapping, size: MappingLayout.size),
-                normalCurves: try readPage(pages.normalCurves, size: CurvesLayout.size),
+                normalCurves: try curves(pages.normalCurves),
                 shiftMapping: try readPage(pages.shiftMapping, size: MappingLayout.size),
-                shiftCurves: try readPage(pages.shiftCurves, size: CurvesLayout.size)
+                shiftCurves: try curves(pages.shiftCurves)
             )
         }
     }

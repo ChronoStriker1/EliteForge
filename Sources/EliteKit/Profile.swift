@@ -11,12 +11,16 @@ public struct RGBColor: Hashable, Codable, Sendable {
         self.blue = blue
     }
 
+    /// Parses `#RRGGBB`, with or without the `#`, in either case.
     public init?(hex: String) {
-        guard let bytes = [UInt8](hexString: hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))), bytes.count == 3 else { return nil }
-        self.init(red: bytes[0], green: bytes[1], blue: bytes[2])
+        var digits = Substring(hex.trimmingCharacters(in: .whitespaces))
+        if digits.first == "#" { digits = digits.dropFirst() }
+        guard digits.count == 6, digits.allSatisfy(\.isHexDigit), let value = UInt32(digits, radix: 16) else { return nil }
+        self.init(red: UInt8(value >> 16), green: UInt8(value >> 8 & 0xFF), blue: UInt8(value & 0xFF))
     }
 
-    public var hex: String { String(format: "%02X%02X%02X", red, green, blue) }
+    /// `#RRGGBB`, upper case.
+    public var hex: String { String(format: "#%02X%02X%02X", red, green, blue) }
 
     public func scaled(by brightness: Int) -> RGBColor {
         let factor = Double(max(0, min(brightness, 100))) / 100
@@ -64,37 +68,80 @@ public struct StickCurve: Hashable, Codable, Sendable {
 
     var bytes: [UInt8] { points.flatMap { [$0.x, $0.y] } }
 
-    /// Output (0-1) for an input deflection (0-1), by linear interpolation through the points.
+    /// Output (0-1) for an input deflection (0-1), worked out the way the
+    /// firmware does it, in 15-bit integers: straight lines through (0, 0),
+    /// the three placed points and (32767, 32767).
     public func output(for input: Double) -> Double {
-        let knots = [(0.0, 0.0)] + points.map { (Double($0.x) / 255, Double($0.y) / 255) } + [(1.0, 1.0)]
-        let x = max(0, min(1, input))
-        for index in 1..<knots.count where x <= knots[index].0 {
-            let (x0, y0) = knots[index - 1]
-            let (x1, y1) = knots[index]
-            if x1 - x0 < 0.0001 { return y1 }
-            return y0 + (y1 - y0) * (x - x0) / (x1 - x0)
+        let deflection = Int((max(0, min(1, input)) * 32767).rounded())
+        let knots = [(x: 0, y: 0)] + firmwarePoints + [(x: 32767, y: 32767)]
+        // The same segment choice as firmware 0x10050612: the first point
+        // the input is still left of ends the segment.
+        let end = (1...3).first { deflection < knots[$0].x } ?? 4
+        let (from, to) = (knots[end - 1], knots[end])
+        return Double(Self.firmwareMap(deflection, from: from.x, to.x, onto: from.y, to.y)) / 32767
+    }
+
+    /// Where the firmware puts the three points, as fractions of full
+    /// deflection. Points 2 and 3 are stored as fractions of the range above
+    /// point 1, so they only sit where their bytes say when point 1 is at (0, 0).
+    public var placedPoints: [(x: Double, y: Double)] {
+        firmwarePoints.map { (Double($0.x) / 32767, Double($0.y) / 32767) }
+    }
+
+    /// The curve with one point moved so the firmware places it at `x`, `y`
+    /// (fractions of full deflection). Points 2 and 3 stay in order.
+    public func moving(point index: Int, toPlaced x: Double, _ y: Double) -> StickCurve {
+        func byte(_ fraction: Double) -> Int { Int((max(0, min(1, fraction)) * 255).rounded()) }
+        // The stored fraction that the firmware places at `placed` above `base`.
+        func relative(_ placed: Double, above base: Double) -> Double { base < 1 ? (placed - base) / (1 - base) : 0 }
+        var points = self.points
+        let first = placedPoints[0]
+        let (storedX, storedY) = index == 0 ? (x, y) : (relative(x, above: first.x), relative(y, above: first.y))
+        let lower = index == 2 ? Int(points[1].x) + 1 : 1
+        let upper = index == 1 ? Int(points[2].x) - 1 : 254
+        guard lower <= upper else { return self }
+        points[index] = CurvePoint(x: UInt8(min(max(byte(storedX), lower), upper)), y: UInt8(byte(storedY)))
+        return StickCurve(points: points)
+    }
+
+    /// The points as the firmware uses them (0x10050612): each byte scaled to
+    /// 15 bits (0x10050608), then points 2 and 3 mapped into the range above point 1.
+    private var firmwarePoints: [(x: Int, y: Int)] {
+        func scale(_ byte: UInt8) -> Int { Int(byte) * 128 + Int(byte) / 2 }
+        let x1 = scale(points[0].x), y1 = scale(points[0].y)
+        return [(x1, y1)] + points.dropFirst().map {
+            (Self.firmwareMap(scale($0.x), from: 0, 32767, onto: x1, 32767), Self.firmwareMap(scale($0.y), from: 0, 32767, onto: y1, 32767))
         }
-        return 1
+    }
+
+    /// The firmware's clamped linear map (0x1004e0ca), with its integer
+    /// division that rounds toward zero.
+    private static func firmwareMap(_ value: Int, from low: Int, _ high: Int, onto outLow: Int, _ outHigh: Int) -> Int {
+        if value >= high { return outHigh }
+        if value <= low { return outLow }
+        return outLow + (value - low) * (outHigh - outLow) / (high - low)
     }
 
     public var preset: CurvePreset? { CurvePreset.allCases.first { $0.curve == self } }
 }
 
-/// Named response curves. `.standard` is the controller's factory curve and
-/// matches what the Accessories app writes. The other shapes follow the
-/// Accessories presets of the same names, but their exact point values have
-/// not been captured from the Windows app yet.
+/// Named response curves, in the Accessories app's order. `.standard` is the
+/// controller's factory curve and matches a captured page. The other four
+/// are the table entries the Accessories app writes for its presets
+/// (Devices.App.dll 0x180c28980), not yet captured; which name goes with
+/// which entry is inferred from the order of the app's preset constants.
+/// The case names predate the Accessories labels; they stay as the raw values.
 public enum CurvePreset: String, CaseIterable, Codable, Sendable, Identifiable {
-    case standard, aggressive, instant, delay, smooth
+    case standard, delay, aggressive, instant, smooth
 
     public var id: String { rawValue }
 
     public var label: String {
         switch self {
         case .standard: "Default"
-        case .aggressive: "Aggressive"
+        case .delay: "Slow start"
+        case .aggressive: "Fast start"
         case .instant: "Instant"
-        case .delay: "Delay"
         case .smooth: "Smooth"
         }
     }
@@ -105,10 +152,10 @@ public enum CurvePreset: String, CaseIterable, Codable, Sendable, Identifiable {
         }
         switch self {
         case .standard: return c([0x2B, 0x2B, 0x7F, 0x7F, 0xBF, 0xBF])
-        case .aggressive: return c([0x2B, 0x50, 0x7F, 0xA8, 0xBF, 0xDC])
-        case .instant: return c([0x10, 0x60, 0x40, 0xC0, 0x80, 0xF0])
-        case .delay: return c([0x2B, 0x10, 0x7F, 0x50, 0xBF, 0xA0])
-        case .smooth: return c([0x40, 0x20, 0x7F, 0x7F, 0xBF, 0xDF])
+        case .delay: return c([0x2B, 0x2B, 0x3F, 0x3F, 0xDA, 0x8D])
+        case .aggressive: return c([0x2B, 0x2B, 0x3F, 0x3F, 0x8C, 0xC5])
+        case .instant: return c([0x2B, 0x2B, 0x3F, 0x3F, 0x3F, 0x68])
+        case .smooth: return c([0x2B, 0x2B, 0x8C, 0x8C, 0xD8, 0x9C])
         }
     }
 }
@@ -157,26 +204,17 @@ public struct StickSettings: Hashable, Codable, Sendable {
     }
 
     /// `curve` with its first point moved to make a dead zone of `zone`.
+    /// Points 2 and 3 keep their bytes: the firmware places them in the
+    /// travel past point 1, so the rest of the curve fits after the dead zone.
     static func curve(_ curve: StickCurve, deadZone zone: UInt8) -> StickCurve {
         var points = curve.points
         let zone = min(zone, maxDeadZone)
-        if zone == 0 {
-            // Back to a normal first point, halfway to the second. A curve
-            // that has no dead zone stays as it is.
-            guard points[0].y == 0 else { return curve }
-            points[0] = CurvePoint(x: max(1, points[1].x / 2), y: max(1, points[1].y / 2))
-        } else {
-            // Keep the points in order along the stick's travel. Work in Int:
-            // curves from files or the controller can be out of order or end at 255.
-            let x0 = Int(zone)
-            var x1 = Int(points[1].x)
-            var x2 = Int(points[2].x)
-            if x1 <= x0 { x1 = max((x0 + x2) / 2, x0 + 1) }
-            x1 = min(x1, 253)
-            x2 = min(max(x2, x1 + 1), 254)
+        if zone > 0 {
             points[0] = CurvePoint(x: zone, y: 0)
-            points[1] = CurvePoint(x: UInt8(x1), y: max(points[1].y, 1))
-            points[2] = CurvePoint(x: UInt8(x2), y: points[2].y)
+        } else if points[0].y == 0 {
+            // Back to the first point the Accessories app always writes. A
+            // curve that has no dead zone stays as it is.
+            points[0] = CurvePreset.standard.curve.points[0]
         }
         return StickCurve(points: points)
     }
@@ -184,28 +222,94 @@ public struct StickSettings: Hashable, Codable, Sendable {
     public var deadZonePercent: Int { Int((Double(deadZone) / 255 * 100).rounded()) }
 }
 
+/// A trigger's range from the Accessories app, as two points on its travel
+/// (0-255): below `deadZone` the trigger reads zero, and from `range` on it
+/// reads full. The controller turns each byte into a 10-bit position,
+/// `b * 4 + (b >> 6)`. `range` is always past `deadZone`: the firmware
+/// rewrites any other pair (0x1005078c), so EliteForge never writes one.
 public struct TriggerSettings: Hashable, Codable, Sendable {
-    /// Trigger range from the Accessories app: how far the trigger travels
-    /// (0-255) before it reports a full press. 255 uses the whole travel,
-    /// lower values reach full sooner, and 0 makes the trigger on or off.
-    /// Stored as a u16 LE at mapping bytes 32-33 for LT and 38-39 for RT,
-    /// following upstream xbelite2. 67% is 0xAB; the high byte is zero.
-    public var range: UInt8
+    public private(set) var range: UInt8
+    public private(set) var deadZone: UInt8
 
-    public init(range: UInt8 = 0xFF) { self.range = range }
+    /// A pair the firmware wouldn't keep is repaired the way the firmware
+    /// does, so the settings shown are the ones the controller uses.
+    public init(range: UInt8 = 0xFF, deadZone: UInt8 = 0) {
+        if range > deadZone {
+            (self.range, self.deadZone) = (range, deadZone)
+        } else if deadZone < 0xFF {
+            (self.range, self.deadZone) = (deadZone + 1, deadZone)
+        } else if range == 0 {
+            (self.range, self.deadZone) = (0xFF, 0)
+        } else {
+            (self.range, self.deadZone) = (range, range - 1)
+        }
+    }
 
-    public var rangePercent: Int { Int((Double(range) / 255 * 100).rounded()) }
+    private enum CodingKeys: String, CodingKey { case range, deadZone }
 
-    /// The byte for a percentage, rounded the way the Accessories app does (67% = 0xAB).
-    public static func range(percent: Int) -> UInt8 {
+    /// Setups saved before the dead zone have only the range.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(range: try container.decode(UInt8.self, forKey: .range), deadZone: try container.decodeIfPresent(UInt8.self, forKey: .deadZone) ?? 0)
+    }
+
+    /// Moves the full-press point, keeping it past the dead zone.
+    public mutating func setRange(_ value: UInt8) { range = max(value, deadZone + 1) }
+
+    /// Moves the dead zone, keeping it short of the full-press point.
+    public mutating func setDeadZone(_ value: UInt8) { deadZone = min(value, range - 1) }
+
+    public var rangePercent: Int { Self.percent(range) }
+    public var deadZonePercent: Int { Self.percent(deadZone) }
+
+    /// True when the smallest pull past the dead zone reads full.
+    public var isOnOff: Bool { range == deadZone + 1 }
+
+    /// The byte for a percentage of the travel, rounded the way the Accessories app does (67% = 0xAB).
+    public static func position(percent: Int) -> UInt8 {
         UInt8((Double(min(max(percent, 0), 100)) * 255 / 100).rounded())
     }
 
-    /// What a game would read for `pull` (0-1 of the travel).
+    static func percent(_ position: UInt8) -> Int { Int((Double(position) / 255 * 100).rounded()) }
+
+    /// What a game would read for `pull` (0-1 of the travel), from the
+    /// 10-bit pair the way the firmware maps it.
     public func output(forPull pull: Double) -> Double {
-        guard pull > 0 else { return 0 }
-        guard range > 0 else { return 1 }
-        return min(1, pull / (Double(range) / 255))
+        func tenBit(_ byte: UInt8) -> Double { Double(Int(byte) * 4 + Int(byte) >> 6) }
+        let input = pull * 1023
+        if input <= tenBit(deadZone) { return 0 }
+        if input >= tenBit(range) { return 1 }
+        return (input - tenBit(deadZone)) / (tenBit(range) - tenBit(deadZone))
+    }
+}
+
+/// The Accessories app's "same range for both triggers" option. It isn't
+/// stored, only the two ranges are. It starts on when they match, and after
+/// that only `turnOn` and `turnOff` change it, so moving one range past the
+/// other's value doesn't link them.
+public struct TriggerRangeLink: Equatable, Sendable {
+    public private(set) var isOn: Bool
+
+    public init(_ profile: EliteProfile) {
+        isOn = profile.leftTrigger == profile.rightTrigger
+    }
+
+    /// Links the triggers, giving the right one the left one's range.
+    public mutating func turnOn(in profile: inout EliteProfile) {
+        isOn = true
+        profile.rightTrigger = profile.leftTrigger
+    }
+
+    public mutating func turnOff() { isOn = false }
+
+    /// Changes one trigger's range, and while linked the other's to match:
+    /// both ends of it.
+    public func update(_ trigger: WritableKeyPath<EliteProfile, TriggerSettings>, in profile: inout EliteProfile, _ change: (inout TriggerSettings) -> Void) {
+        change(&profile[keyPath: trigger])
+        if isOn {
+            profile.leftTrigger = profile[keyPath: trigger]
+            profile.rightTrigger = profile[keyPath: trigger]
+        }
     }
 }
 
@@ -236,6 +340,39 @@ public struct LightSettings: Hashable, Codable, Sendable {
     }
 }
 
+/// Version of the page layout, in byte 0 of every page: major in the high
+/// nibble, minor in the low. The mapping page is the same size in both; 1.1
+/// adds curves bytes 28-42 (sticky inputs and the Adaptive Controller's
+/// extra inputs).
+public enum ProfileFormat: UInt8, CaseIterable, Comparable, Sendable {
+    case v1_0 = 0x10
+    case v1_1 = 0x11
+
+    /// The format the Accessories app writes for a controller: 1.1 from
+    /// firmware 5.21.3242.0 on, whatever format the slot was in. nil when the
+    /// firmware isn't known: the controller reports it only in HELLO, and a
+    /// guess can write pages the firmware doesn't take.
+    public init?(firmware: String?) {
+        let parts = firmware?.split(separator: ".").compactMap { Int($0) } ?? []
+        guard parts.count == 4 else { return nil }
+        self = parts.lexicographicallyPrecedes([5, 21, 3242, 0]) ? .v1_0 : .v1_1
+    }
+
+    /// The format to write to a controller with `firmware`. Refuses while
+    /// the firmware is unknown rather than guess.
+    public static func forWriting(firmware: String?) throws -> ProfileFormat {
+        guard let format = ProfileFormat(firmware: firmware) else { throw ControllerError.firmwareUnknown }
+        return format
+    }
+
+    public var curvesSize: Int { self == .v1_0 ? 28 : 43 }
+
+    /// "1.1".
+    public var label: String { "\(rawValue >> 4).\(rawValue & 0x0F)" }
+
+    public static func < (lhs: ProfileFormat, rhs: ProfileFormat) -> Bool { lhs.rawValue < rhs.rawValue }
+}
+
 /// The four raw pages that make up one controller slot.
 public struct SlotPages: Hashable, Codable, Sendable {
     public var normalMapping: [UInt8]
@@ -255,9 +392,20 @@ public struct SlotPages: Hashable, Codable, Sendable {
         shiftMapping: MappingLayout.defaultPage, shiftCurves: CurvesLayout.defaultPage
     )
 
+    /// Refuses pages a controller with `firmware` doesn't take: any while the
+    /// firmware is unknown, and pages laid out in the other format. Byte 0
+    /// isn't checked, since pages read back keep the version they were saved with.
+    public func checkWritable(firmware: String?) throws {
+        let format = try ProfileFormat.forWriting(firmware: firmware)
+        guard normalCurves.count == format.curvesSize, shiftCurves.count == format.curvesSize else {
+            throw ControllerError.wrongPageFormat(expected: format)
+        }
+    }
+
+    /// Mapping pages of 56 bytes and both curves pages the size of one format.
     public var isValid: Bool {
         normalMapping.count == MappingLayout.size && shiftMapping.count == MappingLayout.size
-            && normalCurves.count == CurvesLayout.size && shiftCurves.count == CurvesLayout.size
+            && normalCurves.count == shiftCurves.count && ProfileFormat.allCases.contains { $0.curvesSize == normalCurves.count }
     }
 }
 
@@ -271,8 +419,14 @@ public struct EliteProfile: Hashable, Codable, Sendable, Identifiable {
     public var buttons: [RemappableControl: Assignment]
     /// Assignments while the shift button is held. Missing entries mean `.standard`.
     public var shiftButtons: [RemappableControl: Assignment]
+    /// Inputs that toggle their output in each layer: press once to hold it,
+    /// again to let go. Only `canBeSticky` controls.
+    public private(set) var stickyButtons: Set<RemappableControl>
+    public private(set) var shiftStickyButtons: Set<RemappableControl>
     public var leftStick: StickSettings
     public var rightStick: StickSettings
+    /// Each stick moves as the other, in both layers. The stick clicks stay put.
+    public var swapSticks: Bool
     public var leftTrigger: TriggerSettings
     public var rightTrigger: TriggerSettings
     public var vibration: VibrationSettings
@@ -285,7 +439,8 @@ public struct EliteProfile: Hashable, Codable, Sendable, Identifiable {
     public init(
         id: UUID = UUID(), name: String, modified: Date = Date(),
         buttons: [RemappableControl: Assignment] = [:], shiftButtons: [RemappableControl: Assignment] = [:],
-        leftStick: StickSettings = StickSettings(), rightStick: StickSettings = StickSettings(),
+        stickyButtons: Set<RemappableControl> = [], shiftStickyButtons: Set<RemappableControl> = [],
+        leftStick: StickSettings = StickSettings(), rightStick: StickSettings = StickSettings(), swapSticks: Bool = false,
         leftTrigger: TriggerSettings = TriggerSettings(), rightTrigger: TriggerSettings = TriggerSettings(),
         vibration: VibrationSettings = VibrationSettings(), light: LightSettings = LightSettings(),
         basePages: SlotPages = .factoryDefault
@@ -295,8 +450,11 @@ public struct EliteProfile: Hashable, Codable, Sendable, Identifiable {
         self.modified = modified
         self.buttons = buttons
         self.shiftButtons = shiftButtons
+        self.stickyButtons = stickyButtons.filter(\.canBeSticky)
+        self.shiftStickyButtons = shiftStickyButtons.filter(\.canBeSticky)
         self.leftStick = leftStick
         self.rightStick = rightStick
+        self.swapSticks = swapSticks
         self.leftTrigger = leftTrigger
         self.rightTrigger = rightTrigger
         self.vibration = vibration
@@ -304,8 +462,63 @@ public struct EliteProfile: Hashable, Codable, Sendable, Identifiable {
         self.basePages = basePages
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case id, name, modified, buttons, shiftButtons, stickyButtons, shiftStickyButtons, leftStick, rightStick, swapSticks, leftTrigger, rightTrigger, vibration, light, basePages
+    }
+
+    /// Setups saved before sticky inputs and swap sticks don't have them.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        modified = try container.decode(Date.self, forKey: .modified)
+        buttons = try container.decode([RemappableControl: Assignment].self, forKey: .buttons)
+        shiftButtons = try container.decode([RemappableControl: Assignment].self, forKey: .shiftButtons)
+        stickyButtons = try container.decodeIfPresent(Set<RemappableControl>.self, forKey: .stickyButtons)?.filter(\.canBeSticky) ?? []
+        shiftStickyButtons = try container.decodeIfPresent(Set<RemappableControl>.self, forKey: .shiftStickyButtons)?.filter(\.canBeSticky) ?? []
+        leftStick = try container.decode(StickSettings.self, forKey: .leftStick)
+        rightStick = try container.decode(StickSettings.self, forKey: .rightStick)
+        swapSticks = try container.decodeIfPresent(Bool.self, forKey: .swapSticks) ?? false
+        leftTrigger = try container.decode(TriggerSettings.self, forKey: .leftTrigger)
+        rightTrigger = try container.decode(TriggerSettings.self, forKey: .rightTrigger)
+        vibration = try container.decode(VibrationSettings.self, forKey: .vibration)
+        light = try container.decode(LightSettings.self, forKey: .light)
+        basePages = try container.decode(SlotPages.self, forKey: .basePages)
+    }
+
     public func assignment(for control: RemappableControl, shift: Bool) -> Assignment {
         (shift ? shiftButtons : buttons)[control] ?? .standard
+    }
+
+    public func isSticky(_ control: RemappableControl, shift: Bool) -> Bool {
+        (shift ? shiftStickyButtons : stickyButtons).contains(control)
+    }
+
+    /// Makes an input toggle its output in one layer. The triggers can't.
+    public mutating func setSticky(_ sticky: Bool, for control: RemappableControl, shift: Bool) {
+        guard control.canBeSticky else { return }
+        switch (shift, sticky) {
+        case (false, true): stickyButtons.insert(control)
+        case (false, false): stickyButtons.remove(control)
+        case (true, true): shiftStickyButtons.insert(control)
+        case (true, false): shiftStickyButtons.remove(control)
+        }
+    }
+
+    /// Whether each trigger sends the other in a layer.
+    public func swapsTriggers(shift: Bool) -> Bool {
+        RemappableControl.triggers.allSatisfy { assignment(for: $0, shift: shift) == Assignment.swappedTriggers[$0] }
+    }
+
+    /// Swap triggers, in both layers so holding Shift doesn't swap them back.
+    public var swapsTriggers: Bool {
+        get { swapsTriggers(shift: false) && swapsTriggers(shift: true) }
+        set {
+            for shift in [false, true] {
+                setAssignment(newValue ? .button(.rightTrigger) : .standard, for: .leftTrigger, shift: shift)
+                setAssignment(newValue ? .button(.leftTrigger) : .standard, for: .rightTrigger, shift: shift)
+            }
+        }
     }
 
     public mutating func setAssignment(_ assignment: Assignment, for control: RemappableControl, shift: Bool) {
@@ -322,19 +535,49 @@ public struct EliteProfile: Hashable, Codable, Sendable, Identifiable {
             return
         }
         let wasShift = (shift ? shiftButtons : buttons)[control] == .shift
+        let wasSwapped = swapsTriggers(shift: shift)
         if shift { shiftButtons[control] = value } else { buttons[control] = value }
         if wasShift {
             if shift { buttons[control] = nil } else { shiftButtons[control] = nil }
+        }
+        // A trigger only sends the other trigger as a swap: sending one to the
+        // other swaps them, and remapping either ends the swap.
+        guard control.isTrigger, let other = RemappableControl.triggers.first(where: { $0 != control }) else { return }
+        if assignment == Assignment.swappedTriggers[control] {
+            if shift { shiftButtons[other] = Assignment.swappedTriggers[other] } else { buttons[other] = Assignment.swappedTriggers[other] }
+        } else if wasSwapped {
+            if shift { shiftButtons[other] = nil } else { buttons[other] = nil }
         }
     }
 
     /// True when every setting matches a freshly reset slot, which includes
     /// the recommended stick dead zone.
     public var hasDefaultSettings: Bool {
-        buttons.isEmpty && shiftButtons.isEmpty
-            && leftStick == .recommended && rightStick == .recommended
+        buttons.isEmpty && shiftButtons.isEmpty && stickyButtons.isEmpty && shiftStickyButtons.isEmpty
+            && leftStick == .recommended && rightStick == .recommended && !swapSticks
             && leftTrigger == TriggerSettings() && rightTrigger == TriggerSettings()
             && vibration == VibrationSettings() && light == LightSettings()
+    }
+
+    /// The gamepad output `control` produces in a layer. Triggers left as
+    /// they are, unmapped and shift controls, keyboard keys and other output
+    /// codes produce none.
+    public func output(of control: RemappableControl, shift: Bool) -> GamepadButton? {
+        switch assignment(for: control, shift: shift) {
+        case .standard: control.standardOutput
+        case .button(let button): button
+        case .disabled, .shift, .key, .code: nil
+        }
+    }
+
+    /// The Accessories app warns when nothing on the normal layer produces
+    /// one of these, since A confirms and B goes back on Xbox and in most games.
+    public static let essentialButtons: [GamepadButton] = [.a, .b]
+
+    /// Essential buttons that no control produces on the normal layer.
+    public var unmappedEssentialButtons: [GamepadButton] {
+        let produced = Set(RemappableControl.allCases.compactMap { output(of: $0, shift: false) })
+        return Self.essentialButtons.filter { !produced.contains($0) }
     }
 
     public var shiftControl: RemappableControl? {
@@ -349,9 +592,6 @@ public struct EliteProfile: Hashable, Codable, Sendable, Identifiable {
 
 /// Converts between `EliteProfile` and the raw slot pages.
 public enum ProfileCodec {
-    /// Byte 0 bit that is set once a slot has been saved.
-    public static let savedFlag: UInt8 = 0x01
-
     public enum CodecError: Error, LocalizedError {
         case badPageSize
         public var errorDescription: String? { "The controller returned profile pages of an unexpected size." }
@@ -359,128 +599,70 @@ public enum ProfileCodec {
 
     public static func decode(_ pages: SlotPages, name: String, id: UUID = UUID()) throws -> EliteProfile {
         guard pages.isValid else { throw CodecError.badPageSize }
-        let normal = pages.normalMapping
+        let normal = MappingPage(pages.normalMapping)
         let curves = pages.normalCurves
-        let rumble = MappingLayout.rumbleIntensity
-        var light = LightSettings(brightness: normal[MappingLayout.brightness])
-        if normal[MappingLayout.colorFlag] != 0xFF {
-            let c = MappingLayout.color
-            light.color = RGBColor(red: normal[c], green: normal[c + 1], blue: normal[c + 2])
-        }
-        let inversion = curves[CurvesLayout.inversion]
+        let stickFlags = curves[CurvesLayout.stickFlags]
         return EliteProfile(
             id: id, name: name,
-            buttons: decodeAssignments(normal),
-            shiftButtons: decodeAssignments(pages.shiftMapping),
-            leftStick: StickSettings(curve: StickCurve(bytes: curves[1..<7]), invertY: inversion & 0x01 != 0),
-            rightStick: StickSettings(curve: StickCurve(bytes: curves[13..<19]), invertY: inversion & 0x02 != 0),
-            leftTrigger: TriggerSettings(range: normal[MappingLayout.leftTriggerRange]),
-            rightTrigger: TriggerSettings(range: normal[MappingLayout.rightTriggerRange]),
-            vibration: VibrationSettings(leftGrip: normal[rumble + 1], rightGrip: normal[rumble], leftTrigger: normal[rumble + 3], rightTrigger: normal[rumble + 2]),
-            light: light,
+            buttons: normal.assignments,
+            shiftButtons: MappingPage(pages.shiftMapping).assignments,
+            stickyButtons: sticky(in: pages.normalCurves),
+            shiftStickyButtons: sticky(in: pages.shiftCurves),
+            leftStick: StickSettings(curve: StickCurve(bytes: curves[1..<7]), invertY: stickFlags & 0x01 != 0),
+            rightStick: StickSettings(curve: StickCurve(bytes: curves[13..<19]), invertY: stickFlags & 0x02 != 0),
+            swapSticks: stickFlags & CurvesLayout.swapSticks == CurvesLayout.swapSticks,
+            leftTrigger: normal.leftTrigger.settings,
+            rightTrigger: normal.rightTrigger.settings,
+            vibration: normal.vibration,
+            light: normal.light,
             basePages: pages
         )
     }
 
-    public static func encode(_ profile: EliteProfile) -> SlotPages {
+    /// Pages in `format`, which the controller's firmware decides
+    /// (`ProfileFormat.forWriting(firmware:)`), not the pages the profile was read from.
+    public static func encode(_ profile: EliteProfile, format: ProfileFormat) -> SlotPages {
         let base = profile.basePages.isValid ? profile.basePages : .factoryDefault
-        // Byte 0 bit 0 is clear on a never-written slot (0x10). The
-        // Accessories app always writes 0x11, so mark every page as saved.
-        func saved(_ page: [UInt8]) -> [UInt8] {
+        func versioned(_ page: [UInt8]) -> [UInt8] {
             var page = page
-            page[0] |= savedFlag
+            page[0] = format.rawValue
             return page
         }
+        // A curves page in the other format is cut short or filled in from
+        // the default page. Only 1.1 has room for sticky inputs.
+        func curves(_ page: [UInt8], sticky: Set<RemappableControl>) -> [UInt8] {
+            var page = Array((page + CurvesLayout.defaultPage.dropFirst(page.count)).prefix(format.curvesSize))
+            if format == .v1_1 {
+                let mask = sticky.reduce(UInt16(0)) { $0 | 1 << ($1.mappingOffset - 1) }
+                page[CurvesLayout.sticky] = UInt8(mask & 0xFF)
+                page[CurvesLayout.sticky + 1] = UInt8(mask >> 8)
+            }
+            return versioned(page)
+        }
         return SlotPages(
-            normalMapping: saved(encodeMapping(base.normalMapping, profile: profile, assignments: profile.buttons)),
-            normalCurves: saved(encodeCurves(base.normalCurves, profile: profile)),
-            shiftMapping: saved(encodeMapping(base.shiftMapping, profile: profile, assignments: profile.shiftButtons)),
-            shiftCurves: saved(encodeCurves(base.shiftCurves, profile: profile))
+            normalMapping: versioned(encodeMapping(base.normalMapping, profile: profile, assignments: profile.buttons)),
+            normalCurves: curves(encodeCurves(base.normalCurves, profile: profile), sticky: profile.stickyButtons),
+            shiftMapping: versioned(encodeMapping(base.shiftMapping, profile: profile, assignments: profile.shiftButtons)),
+            shiftCurves: curves(encodeCurves(base.shiftCurves, profile: profile), sticky: profile.shiftStickyButtons)
         )
     }
 
-    static func decodeAssignments(_ page: [UInt8]) -> [RemappableControl: Assignment] {
-        var result: [RemappableControl: Assignment] = [:]
-        let keyboard = page[MappingLayout.keyboardFlags] & MappingLayout.keyboardFlagValue != 0
-        for (index, control) in RemappableControl.paddles.enumerated() {
-            let code = page[control.mappingOffset]
-            if code == MappingLayout.defaultPaddleOutputs[index] { continue }
-            result[control] = assignment(forCode: code)
-        }
-        for control in RemappableControl.buttons {
-            let code = page[control.mappingOffset]
-            if code == control.nativeButton!.rawValue { continue }
-            result[control] = assignment(forCode: code)
-        }
-        for control in RemappableControl.triggers {
-            let code = page[control.mappingOffset]
-            if code == 0 { continue }
-            result[control] = keyboard ? .key(KeyboardKey(usage: code)) : assignment(forCode: code)
-        }
-        return result
+    /// The sticky inputs a 1.1 curves page holds, leaving out the trigger bits.
+    static func sticky(in page: [UInt8]) -> Set<RemappableControl> {
+        guard page.count == ProfileFormat.v1_1.curvesSize else { return [] }
+        let mask = UInt16(page[CurvesLayout.sticky]) | UInt16(page[CurvesLayout.sticky + 1]) << 8
+        return Set(RemappableControl.allCases.filter { $0.canBeSticky && mask & 1 << ($0.mappingOffset - 1) != 0 })
     }
 
-    static func assignment(forCode code: UInt8) -> Assignment {
-        switch code {
-        case MappingLayout.codeDisabled: return .disabled
-        case MappingLayout.codeShift: return .shift
-        default:
-            if let button = GamepadButton(rawValue: code) { return .button(button) }
-            return .key(KeyboardKey(usage: code))
-        }
-    }
-
-    static func code(for assignment: Assignment, control: RemappableControl) -> UInt8 {
-        switch assignment {
-        case .standard:
-            if let index = RemappableControl.paddles.firstIndex(of: control) { return MappingLayout.defaultPaddleOutputs[index] }
-            return control.nativeButton?.rawValue ?? 0x00
-        case .disabled: return MappingLayout.codeDisabled
-        case .shift: return MappingLayout.codeShift
-        case .button(let button): return button.rawValue
-        case .key(let key): return key.usage
-        }
-    }
-
+    /// The profile-wide settings go into both layers' mapping pages.
     static func encodeMapping(_ base: [UInt8], profile: EliteProfile, assignments: [RemappableControl: Assignment]) -> [UInt8] {
-        var page = base
-        var usesKeyboard = false
-        for control in RemappableControl.allCases {
-            let assignment = assignments[control] ?? .standard
-            if control.isTrigger, case .key = assignment { usesKeyboard = true }
-            page[control.mappingOffset] = code(for: assignment, control: control)
-        }
-        if usesKeyboard {
-            page[MappingLayout.keyboardFlags] |= MappingLayout.keyboardFlagValue
-        } else {
-            page[MappingLayout.keyboardFlags] &= ~MappingLayout.keyboardFlagValue
-        }
-
-        let rumble = MappingLayout.rumbleIntensity
-        page[rumble] = min(profile.vibration.rightGrip, 100)
-        page[rumble + 1] = min(profile.vibration.leftGrip, 100)
-        page[rumble + 2] = min(profile.vibration.rightTrigger, 100)
-        page[rumble + 3] = min(profile.vibration.leftTrigger, 100)
-
-        page[MappingLayout.leftTriggerRange] = profile.leftTrigger.range
-        page[MappingLayout.leftTriggerRange + 1] = 0
-        page[MappingLayout.rightTriggerRange] = profile.rightTrigger.range
-        page[MappingLayout.rightTriggerRange + 1] = 0
-
-        page[MappingLayout.brightness] = min(profile.light.brightness, 100)
-        let c = MappingLayout.color
-        if let color = profile.light.color {
-            page[MappingLayout.colorFlag] = 0x00
-            page[c] = color.red
-            page[c + 1] = color.green
-            page[c + 2] = color.blue
-        } else {
-            page[MappingLayout.colorFlag] = 0xFF
-            page[c] = 0
-            page[c + 1] = 0
-            page[c + 2] = 0
-        }
-        return page
+        var page = MappingPage(base)
+        page.assignments = assignments
+        page.vibration = profile.vibration
+        page.leftTrigger = TriggerLockPairs(profile.leftTrigger)
+        page.rightTrigger = TriggerLockPairs(profile.rightTrigger)
+        page.light = profile.light
+        return page.bytes
     }
 
     /// Stick settings are stored in both layers' curves pages. The Accessories
@@ -489,7 +671,7 @@ public enum ProfileCodec {
     static func encodeCurves(_ base: [UInt8], profile: EliteProfile) -> [UInt8] {
         var page = base
         let original = profile.basePages.isValid ? profile.basePages.normalCurves : CurvesLayout.defaultPage
-        let originalInversion = original[CurvesLayout.inversion]
+        let originalFlags = original[CurvesLayout.stickFlags]
         let sticks: [(StickSettings, Int, UInt8)] = [(profile.leftStick, 0, 0x01), (profile.rightStick, 2, 0x02)]
         for (stick, firstAxis, bit) in sticks {
             // Decoding exposes the X-axis curve for each stick. Only when the
@@ -502,9 +684,13 @@ public enum ProfileCodec {
                     page.replaceSubrange(offset..<offset + 6, with: stick.curve.bytes)
                 }
             }
-            if (originalInversion & bit != 0) != stick.invertY {
-                if stick.invertY { page[CurvesLayout.inversion] |= bit } else { page[CurvesLayout.inversion] &= ~bit }
+            if (originalFlags & bit != 0) != stick.invertY {
+                if stick.invertY { page[CurvesLayout.stickFlags] |= bit } else { page[CurvesLayout.stickFlags] &= ~bit }
             }
+        }
+        // A page with only one of the swap bits keeps it unless the setting changes.
+        if (originalFlags & CurvesLayout.swapSticks == CurvesLayout.swapSticks) != profile.swapSticks {
+            if profile.swapSticks { page[CurvesLayout.stickFlags] |= CurvesLayout.swapSticks } else { page[CurvesLayout.stickFlags] &= ~CurvesLayout.swapSticks }
         }
         return page
     }

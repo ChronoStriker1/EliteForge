@@ -1,7 +1,9 @@
 import Foundation
 
-/// Gamepad buttons as encoded in a profile mapping page. These codes differ
-/// from the bit positions in input reports.
+/// What a control can be remapped to, as encoded in a profile mapping page:
+/// the 12 buttons and the two triggers, which the firmware pulls all the
+/// way. These are the 14 the Accessories app offers. The codes differ from
+/// the bit positions in input reports.
 public enum GamepadButton: UInt8, CaseIterable, Codable, Sendable, Identifiable {
     case a = 0x04
     case b = 0x05
@@ -15,6 +17,8 @@ public enum GamepadButton: UInt8, CaseIterable, Codable, Sendable, Identifiable 
     case rightBumper = 0x0D
     case leftStick = 0x0E
     case rightStick = 0x0F
+    case leftTrigger = 0x10
+    case rightTrigger = 0x11
 
     public var id: UInt8 { rawValue }
 
@@ -32,6 +36,8 @@ public enum GamepadButton: UInt8, CaseIterable, Codable, Sendable, Identifiable 
         case .rightBumper: "Right bumper"
         case .leftStick: "Left stick click"
         case .rightStick: "Right stick click"
+        case .leftTrigger: "Left trigger"
+        case .rightTrigger: "Right trigger"
         }
     }
 
@@ -49,6 +55,8 @@ public enum GamepadButton: UInt8, CaseIterable, Codable, Sendable, Identifiable 
         case .rightBumper: "RB"
         case .leftStick: "LS"
         case .rightStick: "RS"
+        case .leftTrigger: "LT"
+        case .rightTrigger: "RT"
         }
     }
 }
@@ -107,6 +115,36 @@ public enum RemappableControl: String, CaseIterable, Codable, CodingKeyRepresent
         }
     }
 
+    /// This control's bit in input reports. Triggers are analog and have none.
+    public var inputButton: InputButton? {
+        switch self {
+        case .a: .a
+        case .b: .b
+        case .x: .x
+        case .y: .y
+        case .dpadUp: .dpadUp
+        case .dpadDown: .dpadDown
+        case .dpadLeft: .dpadLeft
+        case .dpadRight: .dpadRight
+        case .leftBumper: .leftBumper
+        case .rightBumper: .rightBumper
+        case .leftStick: .leftStick
+        case .rightStick: .rightStick
+        case .paddleUpperRight: .paddleUpperRight
+        case .paddleLowerRight: .paddleLowerRight
+        case .paddleUpperLeft: .paddleUpperLeft
+        case .paddleLowerLeft: .paddleLowerLeft
+        case .leftTrigger, .rightTrigger: nil
+        }
+    }
+
+    /// The button this control produces when it isn't remapped: its own
+    /// button, or for a paddle the Accessories default. nil for triggers.
+    public var standardOutput: GamepadButton? {
+        if let index = Self.paddles.firstIndex(of: self) { return GamepadButton(rawValue: MappingLayout.defaultPaddleOutputs[index]) }
+        return nativeButton
+    }
+
     public var isPaddle: Bool {
         switch self {
         case .paddleUpperRight, .paddleLowerRight, .paddleUpperLeft, .paddleLowerLeft: true
@@ -115,6 +153,17 @@ public enum RemappableControl: String, CaseIterable, Codable, CodingKeyRepresent
     }
 
     public var isTrigger: Bool { self == .leftTrigger || self == .rightTrigger }
+
+    /// The firmware toggles only the inputs of mapping bytes 1-16
+    /// (0x1004fe34), so the triggers can't be sticky.
+    public var canBeSticky: Bool { !isTrigger }
+
+    /// What the Accessories app lets this control send. A trigger's own
+    /// output is its default, and it can only get the other trigger's by
+    /// swapping the triggers.
+    public var targets: [GamepadButton] {
+        isTrigger ? GamepadButton.allCases.filter { $0 != .leftTrigger && $0 != .rightTrigger } : GamepadButton.allCases
+    }
 
     /// Byte offset of this control's output in the 56-byte mapping page.
     public var mappingOffset: Int {
@@ -156,9 +205,19 @@ public enum Assignment: Hashable, Codable, Sendable {
     case shift
     /// The control acts as another gamepad button.
     case button(GamepadButton)
-    /// The control sends a keyboard key (HID usage). Only works on Xbox and
-    /// Windows, where the system driver turns it into a key press.
-    case key(KeyboardKey)
+    /// The control sends a keyboard key (HID usage) with modifiers. Only
+    /// works on Xbox and Windows, where the system driver turns it into a
+    /// key press.
+    case key(KeyCombination)
+    /// An output the Accessories app doesn't offer on the Elite 2, such as
+    /// Menu (0x02), a stick direction (0x12-0x19) or a paddle (0x1A-0x1D),
+    /// kept as read.
+    case code(UInt8)
+
+    /// What each trigger is assigned while the triggers are swapped: each
+    /// sends the other. The Accessories app stores that as the swap flag
+    /// (0x180e9aeac), and only allows it that way.
+    public static let swappedTriggers: [RemappableControl: Assignment] = [.leftTrigger: .button(.rightTrigger), .rightTrigger: .button(.leftTrigger)]
 
     public var label: String {
         switch self {
@@ -167,6 +226,7 @@ public enum Assignment: Hashable, Codable, Sendable {
         case .shift: "Shift"
         case .button(let button): button.label
         case .key(let key): "Key: \(key.label)"
+        case .code(let code): String(format: "Output 0x%02X", code)
         }
     }
 }
@@ -186,15 +246,21 @@ public enum MappingLayout {
     public static let codeDisabled: UInt8 = 0x00
     public static let codeShift: UInt8 = 0x01
 
+    /// Keyboard modifier nibbles: input byte n's at byte 19 + (n - 1) / 2,
+    /// the odd byte's input in the low nibble.
+    public static let modifiers = 19
     public static let rumbleIntensity = 28 // [weak, strong, right trigger, left trigger], 0-100
-    public static let leftTriggerRange = 32 // low byte of u16 LE
-    public static let rightTriggerRange = 38 // low byte of u16 LE
-    // Stick saturation at 34-35 and 40-41 is preserved from the base page.
+    /// (max, min) pairs per hair trigger lock position (full, half, short): LT 32-37, RT 38-43.
+    public static let triggerPairs = 32
     public static let brightness = 44
     public static let colorFlag = 45 // 0xFF = default white, 0x00 = custom colour
     public static let color = 46 // R, G, B
-    public static let keyboardFlags = 55 // 0x80 when a trigger sends a keyboard key
-    public static let keyboardFlagValue: UInt8 = 0x80
+    /// A u32 LE flag word. Bit 14 + (n - 1) is set when input byte n holds
+    /// a HID keyboard usage instead of a code: bit 30 (0x40 in byte 55) is
+    /// LT, bit 31 (0x80) RT. Bits 1-13 are kept as read.
+    public static let flags = 52
+    /// Flag word bit 0: the triggers are swapped, with bytes 17 and 18 at 0.
+    public static let swapTriggers: UInt32 = 0x01
 
     /// The page the Accessories app writes when restoring a profile to default.
     public static let defaultPage: [UInt8] = [UInt8](hexString:
@@ -202,13 +268,19 @@ public enum MappingLayout {
         "ff 00 ff 00 00 00 ff 00 ff 00 00 00 64 ff 00 00 00 30 30 00 00 00 00 00")!
 }
 
-/// Byte layout of the 43-byte curves page.
+/// Byte layout of the curves page: 43 bytes, or 28 in format 1.0.
 public enum CurvesLayout {
-    public static let size = 43
     /// Six bytes per axis: three (x, y) control points. Axis order LX, LY, RX, RY.
     public static let curveOffsets = [1, 7, 13, 19]
-    /// Bit 0 inverts the left stick Y axis, bit 1 the right stick Y axis.
-    public static let inversion = 27
+    /// Bit 0 inverts the left stick Y axis, bit 1 the right stick Y axis,
+    /// bit 2 swaps the sticks' X axes and bit 3 their Y axes.
+    public static let stickFlags = 27
+    /// Both swap bits: the Accessories app's one Swap sticks setting.
+    public static let swapSticks: UInt8 = 0x0C
+    /// Sticky inputs, format 1.1 only: bit n - 1 of the u24 LE at bytes
+    /// 28-30 is input byte n. The 16 inputs that can be sticky fill bytes 28
+    /// and 29; byte 30 holds the LT and RT bits, which the firmware ignores.
+    public static let sticky = 28
 
     public static let defaultPage: [UInt8] = [UInt8](hexString:
         "11 2b 2b 7f 7f bf bf 2b 2b 7f 7f bf bf 2b 2b 7f 7f bf bf 2b 2b 7f 7f bf bf 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00")!

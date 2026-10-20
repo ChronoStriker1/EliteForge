@@ -33,7 +33,9 @@ final class AppModel {
     var controllerName = ""
     /// Profiles currently stored on the controller, by slot.
     var slots: [Int: EliteProfile] = [:]
-    /// Slots that have never been written (the controller flags them as blank).
+    /// Slots whose pages are in an older format than the firmware writes,
+    /// which is how a slot that was never saved on this firmware reads. Only
+    /// claimed once the firmware is known.
     var blankSlots: Set<Int> = []
     /// Serial of the controller `slots` were read from.
     private var slotsSerial: String?
@@ -44,6 +46,10 @@ final class AppModel {
     var draft: EliteProfile?
     var draftSource: EditorSource?
     var draftIsDirty = false
+    /// Bumped when the draft is replaced rather than edited (switching
+    /// profiles, Revert, a re-read, a reset), so editor state that isn't
+    /// stored in the profile can start over.
+    private(set) var draftRevision = 0
     /// Serial of the controller a slot draft was read from. Saving it to a
     /// different controller is refused, so edits for one can't overwrite another.
     private var draftSerial: String?
@@ -117,14 +123,19 @@ final class AppModel {
     /// The capture was lost while connecting; try again when that attempt ends.
     private var reconnectAfterAttach = false
 
-    /// Firmware and IDs come from the controller's HELLO, which it only sends
-    /// once per power-up, so remember them per serial number.
+    /// Firmware and IDs from the controller's HELLO, remembered per serial
+    /// number so they can be shown before this connection's HELLO arrives.
+    /// For display only: profile writes use `profileFormat`.
     var deviceInfo: DeviceInfo? {
         if let info = status.info { return info }
         guard let serial = status.serialNumber,
               let data = UserDefaults.standard.data(forKey: "deviceInfo." + serial) else { return nil }
         return try? JSONDecoder().decode(DeviceInfo.self, from: data)
     }
+
+    /// Page format for the firmware the controller reported in this capture,
+    /// nil until it has. A remembered firmware can be out of date.
+    var profileFormat: ProfileFormat? { ProfileFormat(firmware: status.writableFirmware) }
 
     private func rememberDeviceInfo(_ status: ControllerStatus) {
         guard let info = status.info, let serial = status.serialNumber,
@@ -346,7 +357,7 @@ final class AppModel {
             busyMessage = "Reading profile \(slot)…"
             let pages = try await helper.readSlot(slot)
             guard generation == sessionGeneration else { return }
-            if pages.normalMapping.first.map({ $0 & 0x01 == 0 }) ?? false {
+            if let format = profileFormat, let version = pages.normalMapping.first, version < format.rawValue {
                 blankSlots.insert(slot)
             } else {
                 blankSlots.remove(slot)
@@ -358,6 +369,7 @@ final class AppModel {
             slotsSerial = status.serialNumber
             if draftSource == .slot(slot), !draftIsDirty {
                 draft = profile
+                draftRevision += 1
                 draftSerial = slotsSerial
             }
         }
@@ -379,6 +391,7 @@ final class AppModel {
             draft = nil
             draftSource = nil
         }
+        draftRevision += 1
         draftIsDirty = false
     }
 
@@ -505,6 +518,10 @@ final class AppModel {
             return
         }
         let target = expectedSerial ?? status.serialNumber
+        guard let format = profileFormat else {
+            errorMessage = ControllerError.firmwareUnknown.localizedDescription
+            return
+        }
         if status.activeSlot != 0 {
             pendingWrite = (slot, profile, libraryID, target)
             waitingForDefaultProfile = true
@@ -512,7 +529,7 @@ final class AppModel {
         }
         busyMessage = "Saving to profile \(slot)…"
         defer { busyMessage = nil }
-        let pages = ProfileCodec.encode(profile)
+        let pages = ProfileCodec.encode(profile, format: format)
         do {
             _ = try await helper.perform(.writeSlot(slot, pages, serial: target))
             // The session ended meanwhile; the next connect reads the slots again.
@@ -524,6 +541,9 @@ final class AppModel {
             library.slotAssignments[slot] = libraryID
             persistLibrary()
             if draftSource == .slot(slot) {
+                // Saving the draft as it is keeps the editor's state; a reset,
+                // or edits made while the save ran, replace the draft.
+                if draft != profile { draftRevision += 1 }
                 draft = stored
                 draftIsDirty = false
                 draftSerial = target
@@ -631,12 +651,26 @@ final class AppModel {
 
     func rumble(leftGrip: UInt8 = 0, rightGrip: UInt8 = 0, leftTrigger: UInt8 = 0, rightTrigger: UInt8 = 0, seconds: Double = 0.8) async {
         do {
-            _ = try await helper.perform(.rumble(leftGrip: leftGrip, rightGrip: rightGrip, leftTrigger: leftTrigger, rightTrigger: rightTrigger))
-            try await Task.sleep(for: .seconds(seconds))
-            _ = try await helper.perform(.rumble(leftGrip: 0, rightGrip: 0, leftTrigger: 0, rightTrigger: 0))
+            try await playRumble(leftGrip: leftGrip, rightGrip: rightGrip, leftTrigger: leftTrigger, rightTrigger: rightTrigger, for: .seconds(seconds))
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    private let rumbles = RumbleSequencer()
+
+    /// Every rumble goes through here, so overlapping ones don't stop each other early.
+    private func playRumble(leftGrip: UInt8, rightGrip: UInt8, leftTrigger: UInt8, rightTrigger: UInt8, for duration: Duration) async throws {
+        try await rumbles.play(for: duration) {
+            _ = try await helper.perform(.rumble(leftGrip: leftGrip, rightGrip: rightGrip, leftTrigger: leftTrigger, rightTrigger: rightTrigger))
+        } stop: {
+            _ = try await helper.perform(.rumble(leftGrip: 0, rightGrip: 0, leftTrigger: 0, rightTrigger: 0))
+        }
+    }
+
+    /// Identifies the controller in hand, like the Accessories app's buzz.
+    func buzz() async {
+        await rumble(leftGrip: 60, rightGrip: 60, leftTrigger: 60, rightTrigger: 60, seconds: 0.5)
     }
 
     // MARK: Calibration
@@ -652,8 +686,20 @@ final class AppModel {
     /// A short buzz on all four motors, the way the Accessories app marks
     /// each finished calibration step (10) and the end (30).
     func calibrationPulse(strength: UInt8) async {
-        _ = try? await helper.perform(.rumble(leftGrip: strength, rightGrip: strength, leftTrigger: strength, rightTrigger: strength))
-        try? await Task.sleep(for: .milliseconds(300))
-        _ = try? await helper.perform(.rumble(leftGrip: 0, rightGrip: 0, leftTrigger: 0, rightTrigger: 0))
+        try? await playRumble(leftGrip: strength, rightGrip: strength, leftTrigger: strength, rightTrigger: strength, for: .milliseconds(300))
     }
 }
+
+#if DEBUG
+extension AppModel {
+    /// For `--snapshots`: runs `body` as if the controller were connected and
+    /// had a Default profile light, then puts back the stored light.
+    func withSnapshotConnection(_ body: () -> Void) {
+        let storedLight = UserDefaults.standard.data(forKey: Self.defaultLightKey)
+        ownsController = true
+        defaultLight = LightSettings(brightness: 80, color: LightColor(red: 0x00, green: 0xD0, blue: 0xFF))
+        body()
+        UserDefaults.standard.set(storedLight, forKey: Self.defaultLightKey)
+    }
+}
+#endif

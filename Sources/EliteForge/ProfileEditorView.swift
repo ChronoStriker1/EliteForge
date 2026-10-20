@@ -21,6 +21,11 @@ struct ProfileEditorView: View {
     @Environment(AppModel.self) private var model
     @State private var tab: EditorTab = .mapping
     @State private var previewID = UUID()
+    /// Slot waiting for the user to confirm saving a profile without A or B.
+    @State private var unmappedSaveSlot: Int?
+    @State private var mappingSelection: RemappableControl? = .paddleUpperRight
+    @State private var pickerOpen = false
+    @State private var quickRemap = QuickRemapDetector()
 
     var body: some View {
         if let profile = model.draft {
@@ -28,11 +33,22 @@ struct ProfileEditorView: View {
                 header(profile)
                     .padding(.horizontal, 20)
                     .padding(.top, 14)
+                if let warning = Self.unmappedWarning(profile) {
+                    Label(warning, systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .glassPanel(cornerRadius: 14, tint: .orange)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 10)
+                }
                 GlassSegmentedPicker(options: EditorTab.allCases, selection: $tab) { $0.label }
                     .padding(.vertical, 12)
                 Group {
                     switch tab {
-                    case .mapping: MappingView(profile: profile)
+                    case .mapping: MappingView(profile: profile, selected: $mappingSelection, pickerOpen: $pickerOpen)
                     case .sticks: ScrollView { SticksEditor(profile: profile).padding(20) }
                     case .triggers: ScrollView { TriggersEditor(profile: profile).padding(20) }
                     case .vibration: ScrollView { VibrationEditor(profile: profile).padding(20) }
@@ -51,6 +67,46 @@ struct ProfileEditorView: View {
                 if key.live { model.showLightPreview(key.light, owner: previewID) }
             }
             .onDisappear { model.endLightPreview(owner: previewID) }
+            .onChange(of: model.input) { _, input in detectQuickRemap(input) }
+            // A held button sends no more reports, so look again when the hold is long enough.
+            .task(id: quickRemap.deadline) {
+                guard let deadline = quickRemap.deadline else { return }
+                try? await Task.sleep(until: deadline, clock: .continuous)
+                if !Task.isCancelled { detectQuickRemap(model.input) }
+            }
+            .confirmationDialog(
+                Self.unmappedWarning(profile) ?? "",
+                isPresented: Binding(get: { unmappedSaveSlot != nil }, set: { if !$0 { unmappedSaveSlot = nil } }),
+                titleVisibility: .visible,
+                presenting: unmappedSaveSlot
+            ) { slot in
+                Button("Save Anyway") { Task { await model.saveDraft(toSlot: slot) } }
+                Button("Cancel", role: .cancel) {}
+            } message: { _ in
+                Text("Xbox menus and most games use A to select and B to go back. You can map them to any button or paddle on the Mapping tab.")
+            }
+        }
+    }
+
+    /// The Accessories app's warning when nothing on the normal layer gives A or B.
+    static func unmappedWarning(_ profile: EliteProfile) -> String? {
+        let buttons = profile.unmappedEssentialButtons.map(\.label)
+        if buttons.isEmpty { return nil }
+        return buttons.count == 1 ? "The \(buttons[0]) button is not mapped" : "The \(buttons.joined(separator: " and ")) buttons are not mapped"
+    }
+
+    private func detectQuickRemap(_ input: InputState) {
+        guard let control = quickRemap.update(model.isConfiguring ? input : InputState(), at: .now) else { return }
+        tab = .mapping
+        mappingSelection = control
+        pickerOpen = true
+    }
+
+    private func save(_ profile: EliteProfile, toSlot slot: Int) {
+        if profile.unmappedEssentialButtons.isEmpty {
+            Task { await model.saveDraft(toSlot: slot) }
+        } else {
+            unmappedSaveSlot = slot
         }
     }
 
@@ -135,7 +191,7 @@ struct ProfileEditorView: View {
                     Label("More", systemImage: "ellipsis")
                 }
                 Button {
-                    Task { await model.saveDraft(toSlot: slot) }
+                    save(profile, toSlot: slot)
                 } label: {
                     Label("Save to Controller", systemImage: "square.and.arrow.down")
                         .labelStyle(.titleAndIcon)
@@ -149,7 +205,7 @@ struct ProfileEditorView: View {
                 Button { export(profile) } label: { Label("Export", systemImage: "square.and.arrow.up") }
                 Menu {
                     ForEach(1...3, id: \.self) { slot in
-                        Button("Profile \(slot)") { Task { await model.saveDraft(toSlot: slot) } }
+                        Button("Profile \(slot)") { save(profile, toSlot: slot) }
                     }
                 } label: {
                     Label("Load onto Profile", systemImage: "square.and.arrow.down")
@@ -174,15 +230,25 @@ struct SticksEditor: View {
     let profile: EliteProfile
 
     var body: some View {
-        HStack(alignment: .top, spacing: 18) {
-            stickCard("Left thumbstick", stick: profile.leftStick, x: model.input.rawLeftStickX, y: model.input.rawLeftStickY) { change in
-                model.updateDraft { change(&$0.leftStick) }
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Swap sticks", isOn: Binding(get: { profile.swapSticks }, set: { on in model.updateDraft { $0.swapSticks = on } }))
+                    .toggleStyle(.switch)
+                    .tint(.xbox)
+                Text("The left stick moves as the right one and the other way round. The stick clicks stay where they are; remap them on the Mapping tab.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            stickCard("Right thumbstick", stick: profile.rightStick, x: model.input.rawRightStickX, y: model.input.rawRightStickY) { change in
-                model.updateDraft { change(&$0.rightStick) }
+            HStack(alignment: .top, spacing: 18) {
+                stickCard("Left thumbstick", stick: profile.leftStick, x: model.input.rawLeftStickX, y: model.input.rawLeftStickY) { change in
+                    model.updateDraft { change(&$0.leftStick) }
+                }
+                stickCard("Right thumbstick", stick: profile.rightStick, x: model.input.rawRightStickX, y: model.input.rawRightStickY) { change in
+                    model.updateDraft { change(&$0.rightStick) }
+                }
             }
+            .glassGroup()
         }
-        .glassGroup()
     }
 
     private func stickCard(_ title: String, stick: StickSettings, x: Int16, y: Int16, update: @escaping ((inout StickSettings) -> Void) -> Void) -> some View {
@@ -447,18 +513,22 @@ struct CurveEditor: View {
                         .overlay(Circle().stroke(Color.xbox, lineWidth: 3))
                         .shadow(color: .black.opacity(0.4), radius: 3)
                         .frame(width: 18, height: 18)
-                        .position(position(curve.points[index], in: size))
-                        .gesture(DragGesture().onChanged { value in drag(index, to: value.location, in: size) })
+                        .position(position(curve.placedPoints[index], in: size))
+                        .gesture(DragGesture().onChanged { value in
+                            onChange(curve.moving(point: index, toPlaced: value.location.x / size.width, 1 - value.location.y / size.height))
+                        })
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
     }
 
+    /// Drawn through the points where the controller places them, so the
+    /// line and the live dot agree with what a game gets.
     private func curveLine(in size: CGSize) -> Path {
         Path { path in
             path.move(to: CGPoint(x: 0, y: size.height))
-            for point in curve.points { path.addLine(to: position(point, in: size)) }
+            for point in curve.placedPoints { path.addLine(to: position(point, in: size)) }
             path.addLine(to: CGPoint(x: size.width, y: 0))
         }
     }
@@ -470,48 +540,54 @@ struct CurveEditor: View {
         return path
     }
 
-    private func position(_ point: CurvePoint, in size: CGSize) -> CGPoint {
-        CGPoint(x: size.width * CGFloat(point.x) / 255, y: size.height * (1 - CGFloat(point.y) / 255))
-    }
-
-    private func drag(_ index: Int, to location: CGPoint, in size: CGSize) {
-        var points = curve.points
-        let lower = index > 0 ? Int(points[index - 1].x) + 1 : 1
-        let upper = index < points.count - 1 ? Int(points[index + 1].x) - 1 : 254
-        // Points read from a controller or file may not be in order; don't move one that has no room.
-        guard lower <= upper, (0...255).contains(lower), (0...255).contains(upper) else { return }
-        let x = Int((location.x / size.width * 255).rounded())
-        let y = Int(((1 - location.y / size.height) * 255).rounded())
-        points[index] = CurvePoint(x: UInt8(min(max(x, lower), upper)), y: UInt8(min(max(y, 0), 255)))
-        onChange(StickCurve(points: points))
+    private func position(_ point: (x: Double, y: Double), in size: CGSize) -> CGPoint {
+        CGPoint(x: size.width * point.x, y: size.height * (1 - point.y))
     }
 }
 
 // MARK: Triggers
 
 /// Trigger range, as in the Accessories app: how far the trigger is pulled
-/// before it reports a full press. The tab also shows the hair trigger
-/// locks, which are physical switches, and the live pull.
+/// before it starts to count and before it reports a full press. The tab
+/// also shows the hair trigger locks, which are physical switches, and the
+/// live pull.
 struct TriggersEditor: View {
     @Environment(AppModel.self) private var model
     let profile: EliteProfile
+    @State private var link: TriggerRangeLink
+
+    init(profile: EliteProfile) {
+        self.profile = profile
+        _link = State(initialValue: TriggerRangeLink(profile))
+    }
 
     var body: some View {
         VStack(spacing: 18) {
+            HStack(spacing: 28) {
+                Toggle("Same range for both triggers", isOn: Binding(get: { link.isOn }, set: { on in
+                    if on { model.updateDraft { link.turnOn(in: &$0) } } else { link.turnOff() }
+                }))
+                Toggle("Swap triggers", isOn: Binding(get: { profile.swapsTriggers }, set: { on in model.updateDraft { $0.swapsTriggers = on } }))
+                    .help("Each trigger acts as the other, with or without Shift held")
+            }
+            .toggleStyle(.switch)
+            .tint(.xbox)
+            .frame(maxWidth: .infinity, alignment: .leading)
             HStack(alignment: .top, spacing: 18) {
-                triggerCard("Left trigger", short: "LT", settings: profile.leftTrigger, lock: model.input.leftTriggerStop, live: model.input.rawLeftTrigger) { value in
-                    model.updateDraft { $0.leftTrigger.range = value }
+                triggerCard("Left trigger", short: "LT", settings: profile.leftTrigger, lock: model.input.leftTriggerStop, live: model.input.rawLeftTrigger) { change in
+                    model.updateDraft { link.update(\.leftTrigger, in: &$0, change) }
                 }
-                triggerCard("Right trigger", short: "RT", settings: profile.rightTrigger, lock: model.input.rightTriggerStop, live: model.input.rawRightTrigger) { value in
-                    model.updateDraft { $0.rightTrigger.range = value }
+                triggerCard("Right trigger", short: "RT", settings: profile.rightTrigger, lock: model.input.rightTriggerStop, live: model.input.rawRightTrigger) { change in
+                    model.updateDraft { link.update(\.rightTrigger, in: &$0, change) }
                 }
             }
             .glassGroup()
-            Text("Range sets where a pull counts as a full press. At 100% the whole travel is used; lower values reach full sooner, and 0% makes the trigger on or off. The hair trigger locks on the back shorten the travel itself, and the controller scales the shorter travel so a full pull still reads as 100%.")
+            Text("The lower handle is the dead zone: a pull short of it reads 0%. The upper handle is where a pull reads as a full press. With the hair trigger lock on full or half, the controller uses this range; on short, the trigger is on or off, the same as with the Accessories app. The locks shorten the travel itself, and the controller scales the shorter travel so a full pull still reads as 100%.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: 640)
         }
+        .onChange(of: model.draftRevision) { link = TriggerRangeLink(profile) }
     }
 
     /// The switch positions come with the 0x0C report, on any profile.
@@ -521,26 +597,26 @@ struct TriggersEditor: View {
         model.isConfiguring ? "Press any button on the controller so it reports the switch." : "Connect the controller to read the switch."
     }
 
-    private func triggerCard(_ title: String, short: String, settings: TriggerSettings, lock: TriggerStop?, live: UInt16, update: @escaping (UInt8) -> Void) -> some View {
+    private func triggerCard(_ title: String, short: String, settings: TriggerSettings, lock: TriggerStop?, live: UInt16, update: @escaping ((inout TriggerSettings) -> Void) -> Void) -> some View {
         let pull = Double(min(live, 1023)) / 1023
         return GlassCard(title: title, systemImage: "button.angledtop.vertical.left.fill") {
             HStack(alignment: .bottom, spacing: 24) {
-                TriggerGauge(range: settings.range, live: model.isConfiguring ? live : nil, label: short)
+                TriggerGauge(settings: settings, live: model.isConfiguring ? live : nil, label: short)
                     .frame(width: 70, height: 220)
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .firstTextBaseline) {
                         Text("Range")
                             .font(.subheadline.weight(.semibold))
                         Spacer()
-                        Text(settings.range == 0 ? "On/off" : "\(settings.rangePercent)%")
+                        Text(settings.deadZone == 0 ? "\(settings.rangePercent)%" : "\(settings.deadZonePercent) to \(settings.rangePercent)%")
                             .font(.system(size: 30, weight: .bold, design: .rounded))
                             .monospacedDigit()
                             .contentTransition(.numericText())
                     }
-                    Slider(value: Binding(get: { Double(settings.rangePercent) }, set: { update(TriggerSettings.range(percent: Int($0.rounded()))) }),
-                           in: 0...100)
-                        .tint(.xbox)
-                    Text(settings.range == 0 ? "Any pull is a full press." : "Full press at \(settings.rangePercent)% of the pull.")
+                    RangeSlider(lower: settings.deadZone, upper: settings.range,
+                                setLower: { value in update { $0.setDeadZone(value) } },
+                                setUpper: { value in update { $0.setRange(value) } })
+                    Text(rangeSummary(settings))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     if model.isConfiguring {
@@ -563,6 +639,14 @@ struct TriggersEditor: View {
                 }
             }
         }
+    }
+}
+
+extension TriggersEditor {
+    private func rangeSummary(_ settings: TriggerSettings) -> String {
+        if settings.isOnOff { return "On or off: any pull past \(settings.deadZonePercent)% is a full press." }
+        if settings.deadZone == 0 { return "Full press at \(settings.rangePercent)% of the pull." }
+        return "Starts at \(settings.deadZonePercent)% of the pull and reads full at \(settings.rangePercent)%."
     }
 }
 
@@ -589,17 +673,18 @@ struct TriggerLockIndicator: View {
     }
 }
 
-/// Vertical bar showing the live pull and the point where it counts as a
-/// full press.
+/// Vertical bar showing the live pull, the dead zone at the bottom and the
+/// point where it counts as a full press.
 struct TriggerGauge: View {
-    let range: UInt8
+    let settings: TriggerSettings
     let live: UInt16?
     let label: String
 
     var body: some View {
         GeometryReader { proxy in
             let height = proxy.size.height - 22
-            let rangeHeight = height * CGFloat(range) / 255
+            let rangeHeight = height * CGFloat(settings.range) / 255
+            let deadZoneHeight = height * CGFloat(settings.deadZone) / 255
             VStack(spacing: 6) {
                 ZStack(alignment: .bottom) {
                     RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.black.opacity(0.35))
@@ -609,6 +694,10 @@ struct TriggerGauge: View {
                         .fill(Color.xbox.opacity(0.25))
                         .frame(height: height - rangeHeight)
                         .frame(maxHeight: .infinity, alignment: .top)
+                    // Below the dead zone line, it still reads 0%.
+                    Rectangle()
+                        .fill(Color.black.opacity(0.35))
+                        .frame(height: deadZoneHeight)
                     if let live {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .fill(Color.xboxGlow.gradient)
@@ -619,6 +708,12 @@ struct TriggerGauge: View {
                         .fill(Color.white)
                         .frame(height: 2)
                         .offset(y: -rangeHeight)
+                    if settings.deadZone > 0 {
+                        Rectangle()
+                            .fill(Color.white.opacity(0.6))
+                            .frame(height: 1)
+                            .offset(y: -deadZoneHeight)
+                    }
                 }
                 .frame(height: height)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -706,6 +801,7 @@ struct LightEditor: View {
                             ColorPicker("Custom colour", selection: customColor, supportsOpacity: false)
                                 .labelsHidden()
                                 .help("Custom colour")
+                            HexColorField(color: profile.light.color) { color in model.updateDraft { $0.light.color = color } }
                         }
                     }
                     VStack(alignment: .leading, spacing: 6) {
@@ -759,6 +855,40 @@ struct LightEditor: View {
             guard let rgb = LightColor(newValue) else { return }
             model.updateDraft { $0.light.color = rgb }
         })
+    }
+}
+
+/// `#RRGGBB` entry for a light colour. A complete code applies as it's
+/// typed, like picking a swatch; anything else is outlined in red.
+struct HexColorField: View {
+    /// nil is the default white.
+    let color: LightColor?
+    let apply: (LightColor) -> Void
+    @State private var text = ""
+
+    private var shown: LightColor { color ?? LightColor(red: 255, green: 255, blue: 255) }
+
+    var body: some View {
+        TextField("#RRGGBB", text: $text)
+            .textFieldStyle(.plain)
+            .font(.callout.monospaced())
+            .frame(width: 76)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Color.black.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(LightColor(hex: text) == nil ? Color.red.opacity(0.85) : .white.opacity(0.12)))
+            .help("Colour as #RRGGBB")
+            // Comparing colours rather than text leaves a code that's being
+            // typed alone, and typing white keeps the default white.
+            .onChange(of: shown, initial: true) { _, shown in
+                if LightColor(hex: text) != shown { text = shown.hex }
+            }
+            .onChange(of: text) { _, text in
+                if let parsed = LightColor(hex: text), parsed != shown { apply(parsed) }
+            }
+            .onSubmit {
+                if let parsed = LightColor(hex: text) { text = parsed.hex }
+            }
     }
 }
 

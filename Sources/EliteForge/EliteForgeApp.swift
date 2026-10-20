@@ -38,6 +38,8 @@ struct EliteForgeApp: App {
                 }
                 .keyboardShortcut("r")
                 .disabled(!model.isConfiguring)
+                Button("Buzz Controller") { Task { await model.buzz() } }
+                    .disabled(!model.isConfiguring)
                 Divider()
                 Button("Reset All Profiles to Defaults…") { model.confirmResetAll = true }
                     .disabled(!model.isConfiguring)

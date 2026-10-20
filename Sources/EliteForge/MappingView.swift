@@ -7,8 +7,9 @@ import SwiftUI
 struct MappingView: View {
     @Environment(AppModel.self) private var model
     let profile: EliteProfile
+    @Binding var selected: RemappableControl?
+    @Binding var pickerOpen: Bool
     @State private var shiftLayer = false
-    @State private var selected: RemappableControl? = .paddleUpperRight
 
     static let canvas = CGSize(width: 1400, height: 880)
     static let artOrigin = CGPoint(x: 200, y: 40)
@@ -21,6 +22,12 @@ struct MappingView: View {
             HStack {
                 GlassSegmentedPicker(options: [false, true], selection: $shiftLayer) { $0 ? "While Shift is held" : "Normal" }
                 Spacer()
+                if model.isConfiguring {
+                    Label(model.input.activeSlot == 0 ? "Hold a button or paddle on the controller to remap it" : "To remap by holding a button, switch the controller to Profile 0 (Default)",
+                          systemImage: "hand.tap")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
                 if let shift = profile.shiftControl {
                     Label("Shift: \(shift.shortLabel)", systemImage: "shift")
                         .font(.callout)
@@ -89,8 +96,8 @@ struct MappingView: View {
         path.addLine(to: elbow)
         path.addLine(to: end)
         let isSelected = selected == control
-        let pressed = model.input.buttons.contains(EliteControllerArt.inputButton(control))
-        let changed = profile.assignment(for: control, shift: shiftLayer) != .standard
+        let pressed = model.input.isPressed(control)
+        let changed = profile.assignment(for: control, shift: shiftLayer) != .standard || profile.isSticky(control, shift: shiftLayer)
         let color: Color = isSelected ? .selection : (pressed ? .xboxGlow : (changed ? .white.opacity(0.45) : .white.opacity(0.16)))
         let active = isSelected || pressed
         context.stroke(path, with: .color(color), lineWidth: active ? 2.5 : 1.2)
@@ -100,16 +107,18 @@ struct MappingView: View {
     private func chip(_ control: RemappableControl) -> some View {
         let assignment = profile.assignment(for: control, shift: shiftLayer)
         let isSelected = selected == control
-        let changed = assignment != .standard
-        let pressed = model.input.buttons.contains(EliteControllerArt.inputButton(control))
+        let sticky = profile.isSticky(control, shift: shiftLayer)
+        let changed = assignment != .standard || sticky
+        let pressed = model.input.isPressed(control)
         return Button {
+            pickerOpen = false
             withAnimation(.snappy(duration: 0.2)) { selected = control }
         } label: {
             VStack(spacing: 2) {
                 Text(control.shortLabel)
                     .font(.system(size: 17, weight: .bold, design: .rounded))
                     .foregroundStyle(control.isPaddle ? Color.orange : .white)
-                Text(chipDetail(control, assignment))
+                Text(chipDetail(control, assignment) + (sticky ? " · sticky" : ""))
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(changed ? Color.xboxGlow : Color.white.opacity(0.5))
                     .lineLimit(1)
@@ -128,17 +137,16 @@ struct MappingView: View {
     }
 
     private func chipDetail(_ control: RemappableControl, _ assignment: Assignment) -> String {
+        if control.isTrigger, profile.swapsTriggers(shift: shiftLayer) { return "Swapped" }
         switch assignment {
         case .standard:
-            if let index = RemappableControl.paddles.firstIndex(of: control),
-               let button = GamepadButton(rawValue: MappingLayout.defaultPaddleOutputs[index]) {
-                return "→ \(button.shortLabel) (default)"
-            }
+            if control.isPaddle, let button = control.standardOutput { return "→ \(button.shortLabel) (default)" }
             return "Default"
         case .disabled: return "Unmapped"
         case .shift: return "Shift"
         case .button(let button): return "→ \(button.shortLabel)"
         case .key(let key): return "⌨ \(key.label)"
+        case .code: return assignment.label
         }
     }
 
@@ -160,15 +168,34 @@ struct MappingView: View {
                 Text("This is the Shift button")
                     .foregroundStyle(.secondary)
             } else {
-                Menu {
-                    menuItems(for: control, current: current)
+                // A popover rather than a Menu, so holding a control on the
+                // controller can open it.
+                Button {
+                    pickerOpen.toggle()
                 } label: {
-                    Text(current.label)
-                        .frame(minWidth: 180, alignment: .leading)
+                    HStack {
+                        Text(current.label)
+                        Spacer()
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.caption)
+                    }
+                    .frame(minWidth: 180, alignment: .leading)
                 }
-                .menuStyle(.button)
                 .glassButton()
                 .fixedSize()
+                .popover(isPresented: $pickerOpen, arrowEdge: .top) {
+                    AssignmentPicker(control: control, shiftLayer: shiftLayer, current: current) { value in
+                        model.updateDraft { $0.setAssignment(value, for: control, shift: shiftLayer) }
+                        // A key keeps the picker open so its modifiers can be set.
+                        guard case .key = value else {
+                            pickerOpen = false
+                            return
+                        }
+                    }
+                }
+            }
+            if control.canBeSticky {
+                stickyButton(for: control)
             }
             Spacer()
             if current != .standard {
@@ -183,36 +210,135 @@ struct MappingView: View {
         .glassPanel(cornerRadius: 18)
     }
 
-    @ViewBuilder
-    private func menuItems(for control: RemappableControl, current: Assignment) -> some View {
-        let set: (Assignment) -> Void = { value in
-            model.updateDraft { $0.setAssignment(value, for: control, shift: shiftLayer) }
+    /// Sticky inputs live in curves bytes that only format 1.1 pages have.
+    private func stickyButton(for control: RemappableControl) -> some View {
+        let on = profile.isSticky(control, shift: shiftLayer)
+        let supported = model.profileFormat != .v1_0
+        return Button {
+            model.updateDraft { $0.setSticky(!on, for: control, shift: shiftLayer) }
+        } label: {
+            Label("Sticky", systemImage: on ? "pin.fill" : "pin")
+                .font(.callout)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .foregroundStyle(on ? Color.white : .primary)
+                .background(on ? AnyShapeStyle(Color.xbox.gradient) : AnyShapeStyle(Color.white.opacity(0.06)), in: Capsule())
         }
-        if control.isTrigger {
-            Button("Default (trigger)") { set(.standard) }
-            Menu("Keyboard key") {
-                ForEach(KeyboardKey.all) { key in
-                    Button(key.label) { set(.key(key)) }
+        .buttonStyle(.plain)
+        .disabled(!supported)
+        .help(supported ? "Press the control once to hold its output and again to let go" : "Sticky inputs need controller firmware 5.21.3242 or newer")
+        .accessibilityAddTraits(on ? .isSelected : [])
+    }
+}
+
+/// What a control can do in one layer: the inspector's popover.
+struct AssignmentPicker: View {
+    let control: RemappableControl
+    let shiftLayer: Bool
+    let current: Assignment
+    let choose: (Assignment) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(control.label)
+                .font(.headline)
+                .padding(.horizontal, 10)
+                .padding(.bottom, 6)
+            if let unlisted {
+                row(unlisted, current)
+            }
+            // A trigger's byte is 0 for "keep the trigger", so it can't be unmapped.
+            row(defaultLabel, .standard)
+            if !control.isTrigger {
+                row("Unmapped", .disabled)
+                if !shiftLayer {
+                    row("Shift", .shift)
                 }
             }
-        } else {
-            Button(defaultLabel(control)) { set(.standard) }
-            Button("Unmapped") { set(.disabled) }
-            if !shiftLayer {
-                Button("Shift") { set(.shift) }
+            Divider().padding(.vertical, 4)
+            ForEach(control.targets) { button in
+                row(button.label, .button(button))
             }
-            Divider()
-            ForEach(GamepadButton.allCases) { button in
-                Button(button.label) { set(.button(button)) }
+            Divider().padding(.vertical, 4)
+            keyboard
+        }
+        .padding(10)
+        .frame(width: 260)
+    }
+
+    /// A key from the menu, then the modifiers sent with it.
+    private var keyboard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Menu(currentKey.map { "Key: \($0.key.label)" } ?? "Keyboard key") {
+                ForEach(KeyboardKey.all) { key in
+                    Button(key.label) { choose(.key(KeyCombination(key, modifiers: currentKey?.modifiers ?? []))) }
+                }
             }
+            if let key = currentKey {
+                HStack(spacing: 6) {
+                    ForEach(KeyModifiers.named, id: \.1) { modifier, name in
+                        let on = key.modifiers.contains(modifier)
+                        Button(name) {
+                            var changed = key
+                            changed.modifiers.formSymmetricDifference(modifier)
+                            choose(.key(changed))
+                        }
+                        .font(.callout)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .foregroundStyle(on ? Color.white : .primary)
+                        .background(on ? AnyShapeStyle(Color.xbox.gradient) : AnyShapeStyle(Color.white.opacity(0.06)), in: Capsule())
+                        .buttonStyle(.plain)
+                        .accessibilityAddTraits(on ? .isSelected : [])
+                    }
+                }
+            }
+            Text("Keys work on Xbox and Windows. macOS ignores them.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+    }
+
+    /// The current assignment when the list doesn't offer it: swapped
+    /// triggers, or an output read from the controller or a file.
+    private var unlisted: String? {
+        switch current {
+        case .standard, .disabled, .shift, .key: return nil
+        case .button(let button) where control.targets.contains(button): return nil
+        case .button(let button) where control.isTrigger: return "Swapped with \(button.shortLabel) (Triggers tab)"
+        default: return current.label
         }
     }
 
-    private func defaultLabel(_ control: RemappableControl) -> String {
-        if let index = RemappableControl.paddles.firstIndex(of: control),
-           let button = GamepadButton(rawValue: MappingLayout.defaultPaddleOutputs[index]) {
-            return "Default (\(button.label))"
+    private var currentKey: KeyCombination? {
+        if case .key(let key) = current { return key }
+        return nil
+    }
+
+    private func row(_ title: String, _ value: Assignment) -> some View {
+        Button {
+            choose(value)
+        } label: {
+            HStack {
+                Text(title)
+                Spacer()
+                if value == current {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(Color.xboxGlow)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+    }
+
+    private var defaultLabel: String {
+        if control.isTrigger { return "Default (trigger)" }
+        if control.isPaddle, let button = control.standardOutput { return "Default (\(button.label))" }
         return "Default"
     }
 }

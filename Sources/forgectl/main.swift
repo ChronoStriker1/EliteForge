@@ -111,6 +111,7 @@ final class DirectBackend: Backend {
         case .readSlot(let slot):
             return .pages(try session.readSlot(slot))
         case .writeSlot(let slot, let pages, _):
+            try pages.checkWritable(firmware: controller.deviceInfo?.firmware)
             try session.writeSlot(slot, pages: pages)
             return .ok
         case .readName:
@@ -161,12 +162,14 @@ func slotArgument(_ args: [String], _ index: Int) -> Int {
 }
 
 func describe(_ profile: EliteProfile, pages: SlotPages) -> String {
-    var lines: [String] = []
+    let version = pages.normalMapping[0]
+    var lines = [String(format: "Page format %d.%d, curves page %d bytes", version >> 4, version & 0x0F, pages.normalCurves.count)]
     func layer(_ title: String, shift: Bool) {
-        let changed = RemappableControl.allCases.filter { profile.assignment(for: $0, shift: shift) != .standard }
+        let changed = RemappableControl.allCases.filter { profile.assignment(for: $0, shift: shift) != .standard || profile.isSticky($0, shift: shift) }
         lines.append("\(title):" + (changed.isEmpty ? " all default" : ""))
         for control in changed {
-            lines.append("  \(control.shortLabel.padding(toLength: 4, withPad: " ", startingAt: 0)) -> \(profile.assignment(for: control, shift: shift).label)")
+            let sticky = profile.isSticky(control, shift: shift) ? ", sticky" : ""
+            lines.append("  \(control.shortLabel.padding(toLength: 4, withPad: " ", startingAt: 0)) -> \(profile.assignment(for: control, shift: shift).label)\(sticky)")
         }
     }
     layer("Buttons", shift: false)
@@ -175,10 +178,23 @@ func describe(_ profile: EliteProfile, pages: SlotPages) -> String {
         let curve = stick.preset.map { $0.label + (stick.deadZone > 0 ? ", dead zone \(stick.deadZonePercent)%" : "") } ?? "Custom " + stick.curve.points.map { "(\($0.x),\($0.y))" }.joined(separator: " ")
         lines.append("\(name): curve \(curve)\(stick.invertY ? ", Y inverted" : "")")
     }
-    lines.append("Trigger range: left \(profile.leftTrigger.rangePercent)%, right \(profile.rightTrigger.rangePercent)%")
+    func range(_ trigger: TriggerSettings) -> String {
+        trigger.deadZone == 0 ? "full at \(trigger.rangePercent)%" : "from \(trigger.deadZonePercent)%, full at \(trigger.rangePercent)%"
+    }
+    lines.append("Trigger range: left \(range(profile.leftTrigger)), right \(range(profile.rightTrigger))")
+    let swaps = [("sticks", profile.swapSticks), ("triggers", profile.swapsTriggers(shift: false)), ("triggers while Shift is held", profile.swapsTriggers(shift: true))]
+    let swapped = swaps.filter { $0.1 }.map { $0.0 }
+    if !swapped.isEmpty { lines.append("Swapped: " + swapped.joined(separator: ", ")) }
+    // The app writes one range to the full and half lock positions and (0, 0)
+    // to short; pages written otherwise get their pairs shown.
+    let page = MappingPage(pages.normalMapping)
+    for (name, pairs) in [("left", page.leftTrigger), ("right", page.rightTrigger)] where pairs != TriggerLockPairs(pairs.settings) {
+        let stored = [("full", pairs.full), ("half", pairs.half), ("short", pairs.short)].map { String(format: "%@ %02x %02x", $0, $1.max, $1.min) }
+        lines.append("  \(name) trigger (max, min) per lock position: " + stored.joined(separator: ", "))
+    }
     let v = profile.vibration
     lines.append("Vibration: left grip \(v.leftGrip)%, right grip \(v.rightGrip)%, left trigger \(v.leftTrigger)%, right trigger \(v.rightTrigger)%")
-    lines.append("Xbox button: brightness \(profile.light.brightness)%, colour \(profile.light.color.map { "#" + $0.hex } ?? "default")")
+    lines.append("Xbox button: brightness \(profile.light.brightness)%, colour \(profile.light.color?.hex ?? "default")")
     return lines.joined(separator: "\n")
 }
 
@@ -265,14 +281,19 @@ func run() throws {
         let slot = slotArgument(args, 1)
         guard args.count > 2 else { fail("missing file") }
         let data = try Data(contentsOf: URL(fileURLWithPath: args[2]))
-        let pages = command == "write"
-            ? ProfileCodec.encode(try JSONDecoder().decode(EliteProfile.self, from: data))
-            : try JSONDecoder().decode(SlotPages.self, from: data)
+        let pages: SlotPages
+        if command == "write" {
+            let profile = try JSONDecoder().decode(EliteProfile.self, from: data)
+            pages = ProfileCodec.encode(profile, format: try ProfileFormat.forWriting(firmware: HelperRequest.capturedFirmware(using: backend.perform)))
+        } else {
+            pages = try JSONDecoder().decode(SlotPages.self, from: data)
+            try pages.checkWritable(firmware: HelperRequest.capturedFirmware(using: backend.perform))
+        }
         _ = try backend.perform(.writeSlot(slot, pages, serial: nil))
         print("wrote profile \(slot)")
     case "reset":
         let slot = slotArgument(args, 1)
-        _ = try backend.perform(.writeSlot(slot, ProfileCodec.encode(.factoryDefault(name: "Profile \(slot)")), serial: nil))
+        _ = try backend.perform(.writeSlot(slot, ProfileCodec.encode(.factoryDefault(name: "Profile \(slot)"), format: try ProfileFormat.forWriting(firmware: HelperRequest.capturedFirmware(using: backend.perform))), serial: nil))
         print("profile \(slot) restored to defaults (\(StickSettings.recommended.deadZonePercent)% stick dead zone)")
     case "light":
         guard args.count > 1 else { fail("missing colour") }

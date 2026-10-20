@@ -43,34 +43,40 @@ The build is ad-hoc signed. That's enough on the Mac that built it. To run it on
 
 ## Feature parity with the Xbox Accessories app
 
+Encodings marked "from the app's code" were read from the Accessories app (2506.2505.28001.0) and the Elite 2 firmware it bundles, as described in [docs/protocol.md](docs/protocol.md). They match the Windows captures where one exists. Rows that say so were also checked on a controller with firmware 5.22.16.0.
+
 | Feature | Status |
 |---|---|
 | Read and save the 3 profile slots | Done, tested on hardware |
 | Profile library, duplicate, rename, export/import | Done |
 | Remap A/B/X/Y, D-pad, bumpers, stick clicks | Done |
 | Remap the 4 paddles, or unmap them | Done, paddle order verified on hardware |
+| LT and RT as remap targets, and triggers remapped to buttons | Done, from the app's code. The left trigger can't be mapped to the right one except through Swap triggers, as in the app. |
 | Shift button and a second layer of mappings | Done (encoding from Windows captures) |
-| Triggers to keyboard keys | Done (encoding from Windows captures). Works on Xbox and Windows; macOS ignores the keys. |
+| Keyboard keys on any button, paddle or trigger | Done. Trigger keys match a Windows capture; buttons, paddles and the Ctrl, Shift, Alt and Win modifiers are from the app's code. The modifier bit values are inferred. Works on Xbox and Windows; macOS ignores the keys. |
+| Sticky (toggle) inputs | Done for the 16 non-trigger inputs, from the app's code, and verified on hardware with X. The firmware doesn't toggle the triggers. Needs firmware 5.21.3242.0 or later. |
+| Press and hold a button to remap it | Done. Works while Profile 0 (Default) is active. |
+| Warning when A or B isn't mapped | Done |
 | Invert Y per stick | Done (encoding from captures) |
-| Stick response curves with draggable points | Done |
-| Curve presets Aggressive, Instant, Delay, Smooth | Approximate shapes. Microsoft's exact values haven't been captured yet. |
-| Trigger range | Slider per trigger, using upstream xbelite2's saturation layout. Verified on hardware: at 30% the trigger reports full at 30% of its pull. Stick range values are preserved. |
+| Swap sticks, swap triggers | Done, from the app's code, and verified on hardware |
+| Stick response curves with draggable points | Done. The preview places the points the way the firmware does. |
+| Curve presets Default, Slow start, Fast start, Instant, Smooth | Done with the app's exact values. Which name goes with which values is inferred from the order of the app's constants. |
+| Stick dead zones | Done, set through the curve's first point (see docs/protocol.md), and verified on hardware. The stick view draws the dead zone and shows the physical stick position next to the output after the dead zone and curve. |
+| Trigger range and inner dead zone | Done: a min and max per trigger, written for the full and half hair trigger lock positions as the app does. A 30% range was verified on hardware, and so was reaching full output with a min and max set, swapped or not; the inner dead zone's start point is from the app's code. "Same range for both triggers" keeps them linked. |
 | Hair trigger locks | Shown read-only, since they're physical switches. Trigger calibration reads them to check each lock position. |
-| Vibration strength per motor | Done |
-| Xbox button colour and brightness | Done, with a live preview on the controller. Stored colour verified on hardware. |
+| Vibration strength per motor | Done, motor order verified on hardware |
+| Xbox button colour and brightness | Done, with a live preview on the controller and a `#RRGGBB` field. Stored colour verified on hardware. |
 | Default profile light | EliteForge only: the Default profile can't store a colour, so while EliteForge holds the controller over USB the helper shows a chosen colour whenever Default is active, using the same live command as the colour preview. It's white again once released or unplugged. |
 | Controller name | Done |
 | Live button, stick, trigger and paddle test | Done, tested on hardware |
-| Vibration test | Done |
-| Swap sticks, swap triggers | Not yet: encoding unknown |
-| Stick dead zones | Done, set through the curve's first point (see docs/protocol.md), and verified on hardware. The stick view draws the dead zone and shows the physical stick position next to the output after the dead zone and curve. |
-| Trigger inner dead zone | Not yet: encoding unknown |
-| Keyboard keys on buttons and paddles | Not yet: only the trigger encoding is captured |
+| Vibration test, and Buzz to identify the controller | Done |
 | Thumbstick and trigger calibration | Done: the same 0x1E commands as the Accessories app (captured on Windows), stored in the controller. |
 | Stick check | EliteForge only: measures drift at rest, reach around the edge and full trigger travel from the raw positions, and suggests a dead zone for drift. |
+| Older firmware | Profiles are written in the page format the controller's firmware reported on this connection: 1.1 from 5.21.3242.0, 1.0 before. Writes are refused until the firmware is known. Only 5.22.16.0 has been tested. |
+| Turn the controller off | Not yet: the Accessories app hands this to Windows, so its bytes aren't in the app. |
 | Firmware updates | Not planned. Use the Xbox app on Windows or an Xbox console. |
 
-Filling the "encoding unknown" rows needs USB captures of the Windows Accessories app making those changes, for example with Wireshark and USBPcap. With those, the remaining work is small, because the app keeps every byte it doesn't understand unchanged.
+Still unverified on hardware: the keyboard modifier bits, which need the controller on Windows or Xbox because macOS ignores its keyboard reports, and the preset names.
 
 ## Command line
 

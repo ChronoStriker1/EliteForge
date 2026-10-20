@@ -4,26 +4,33 @@ import SwiftUI
 /// Home screen: the controller, live, with its details, renaming and a vibration test.
 struct ControllerView: View {
     @Environment(AppModel.self) private var model
+
+    var body: some View {
+        ScrollView { ControllerDashboard() }
+            .background(CanvasBackground(glow: model.isConfiguring ? 1.2 : 0.6))
+    }
+}
+
+/// The home screen without its ScrollView, which `--snapshots` can't draw.
+struct ControllerDashboard: View {
+    @Environment(AppModel.self) private var model
     @State private var editedName = ""
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 18) {
-                hero
-                infoTiles
-                if model.isConfiguring {
-                    HStack(alignment: .top, spacing: 18) {
-                        renameCard
-                        vibrationCard
-                    }
-                    .glassGroup()
-                    DefaultLightCard()
-                    StickCheckCard()
+        VStack(spacing: 18) {
+            hero
+            infoTiles
+            if model.isConfiguring {
+                HStack(alignment: .top, spacing: 18) {
+                    renameCard
+                    vibrationCard
                 }
+                .glassGroup()
+                DefaultLightCard()
+                StickCheckCard()
             }
-            .padding(20)
         }
-        .background(CanvasBackground(glow: model.isConfiguring ? 1.2 : 0.6))
+        .padding(20)
         .navigationTitle(displayName)
         .onAppear { editedName = model.controllerName }
         .onChange(of: model.controllerName) { _, name in editedName = name }
@@ -43,6 +50,13 @@ struct ControllerView: View {
                 }
                 Spacer()
                 if model.isConfiguring {
+                    Button {
+                        Task { await model.buzz() }
+                    } label: {
+                        Label("Buzz", systemImage: "waveform")
+                    }
+                    .glassButton()
+                    .help("Vibrate all four motors to find this controller")
                     Label("Live", systemImage: "dot.radiowaves.left.and.right")
                         .font(.callout.weight(.semibold))
                         .padding(.horizontal, 12)
@@ -239,6 +253,11 @@ struct DefaultLightCard: View {
                             ColorPicker("Custom colour", selection: customColor, supportsOpacity: false)
                                 .labelsHidden()
                                 .help("Custom colour")
+                            HexColorField(color: light.color) { color in
+                                var updated = light
+                                updated.color = color
+                                model.defaultLight = updated
+                            }
                         }
                         HStack {
                             Text("Brightness").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
